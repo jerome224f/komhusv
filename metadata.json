@@ -1,0 +1,6 @@
+{
+  "name": "Workforce HRMS",
+  "description": "Workforce Attendance & Payroll Management System for manpower agencies.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

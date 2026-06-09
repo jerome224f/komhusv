@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .hide-arrows::-webkit-outer-spin-button,
+  .hide-arrows::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .hide-arrows {
+    -moz-appearance: textfield;
+  }
+}
+
+@media print {
+  /* Hide unnecessary elements on print */
+  .no-print {
+    display: none !important;
+  }
+  
+  /* Reset layout constraints for printing */
+  body, html {
+    background: white;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  #root, #root > div, main {
+    height: auto !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+
+  /* Salary Slip Print Constraints - strict A4 layout */
+  .print-slip {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0;
+    padding: 20mm;
+    background: white;
+    box-sizing: border-box;
+    page-break-after: always;
+  }
+  
+  @page {
+    size: A4;
+    margin: 0;
+  }
+}

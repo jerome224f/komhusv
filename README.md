@@ -12,12 +12,14 @@ npm install
 ```
 
 ### 2. Configure Environment Variables
-Create a `.env` file in the root directory and add the following keys:
+Create a `.env` file in the root directory (use `.env.example` as a template):
 ```env
-PORT=5000
-SUPABASE_URL=https://zqcguxgqsmmnubigpdnw.supabase.co
+SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
+
+> The database schema is in `supabase/schema.sql`. Run it in your Supabase SQL Editor to create all required tables.
+> Default login: **username** `admin` / **password** `admin123`
 
 ### 3. Start the Application
 Run both the Express backend server (port 5000) and the Vite frontend (port 3000) concurrently:

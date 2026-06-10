@@ -1,4 +1,4 @@
-import { Organization, Employee, AttendanceRecord, Advance, Payroll, Department, ActivityLog, SystemNotification } from '../types';
+import { Organization, Employee, AttendanceRecord, Advance, Payroll, Department, ActivityLog, SystemNotification, Reliever } from '../types';
 
 // Helper function for making API calls
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -154,9 +154,12 @@ export const api = {
       return fetchAPI(`/api/attendance?employeeId=${employeeId}`);
     },
     getByEmployeeAndMonth: async (employeeId: string, month: string): Promise<AttendanceRecord[]> => {
-      return fetchAPI(`/api/attendance?employeeId=${employeeId}&date=${month}`);
+      return fetchAPI(`/api/attendance?employeeId=${employeeId}&month=${month}`);
     },
-    upsertMultiple: async (records: Omit<AttendanceRecord, 'id'>[]): Promise<void> => {
+    getRelievers: async (date: string): Promise<AttendanceRecord[]> => {
+      return fetchAPI(`/api/attendance/relievers?date=${date}`);
+    },
+    upsertMultiple: async (records: (Omit<AttendanceRecord, 'id'> & { relieverEmployeeId?: string | null })[]): Promise<void> => {
       return fetchAPI('/api/attendance/upsert', {
         method: 'POST',
         body: JSON.stringify(records),
@@ -207,6 +210,28 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       });
+    }
+  },
+
+  relievers: {
+    getAll: async (orgId?: string): Promise<Reliever[]> => {
+      const url = orgId ? `/api/relievers?orgId=${orgId}` : '/api/relievers';
+      return fetchAPI(url);
+    },
+    create: async (data: Omit<Reliever, 'id' | 'createdAt'>): Promise<Reliever> => {
+      return fetchAPI('/api/relievers', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+    update: async (id: string, data: Partial<Reliever>): Promise<Reliever | undefined> => {
+      return fetchAPI(`/api/relievers/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+    },
+    delete: async (id: string): Promise<void> => {
+      return fetchAPI(`/api/relievers/${id}`, { method: 'DELETE' });
     }
   }
 };

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../lib/api';
-import { Organization, Employee, AttendanceStatus, AttendanceRecord } from '../types';
+import { Organization, Employee, AttendanceStatus, AttendanceRecord, Reliever } from '../types';
 import { 
   Search, Save, Calendar as CalendarIcon, Check, Loader2, Download, 
-  User, Grid, Info, RefreshCw, Users, X, AlertTriangle
+  User, Grid, Info, RefreshCw, Users, X, AlertTriangle, Plus, Trash2, Pencil
 } from 'lucide-react';
 import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
@@ -68,6 +68,22 @@ export function Attendance() {
   const [relieversOrgId, setRelieversOrgId] = useState('');
   const [relieverRecords, setRelieverRecords] = useState<AttendanceRecord[]>([]);
   const [isLoadingRelievers, setIsLoadingRelievers] = useState(false);
+  // Inline reliever edit state (edit reliever directly in the Relievers tab)
+  const [editingRelieverRecId, setEditingRelieverRecId] = useState<string | null>(null);
+  const [editingRelieverVal, setEditingRelieverVal] = useState<string>('');
+  const [isSavingReliever, setIsSavingReliever] = useState(false);
+
+  // Relievers Directory states
+  const [relievers, setRelievers] = useState<Reliever[]>([]);
+  const [showAddRelieverModal, setShowAddRelieverModal] = useState(false);
+  const [editingReliever, setEditingReliever] = useState<Reliever | null>(null);
+  const [newRelieverForm, setNewRelieverForm] = useState({
+    name: '',
+    mobileNumber: '',
+    designation: '',
+    organizationId: '',
+    notes: ''
+  });
 
   // Status mapping colors & labels
   const statusOptions: AttendanceStatus[] = ['Present', 'Absent', 'Half Day', 'Leave', 'Holiday', 'Week Off'];
@@ -93,42 +109,47 @@ export function Attendance() {
   // ---------------------------------------------------------------------------
   // INITIAL LOAD
   // ---------------------------------------------------------------------------
-  useEffect(() => {
-    loadOrganizationsAndEmployees();
-  }, []);
+  const loadRelievers = async () => {
+    try {
+      const rels = await api.relievers.getAll();
+      setRelievers(rels);
+    } catch (error) {
+      console.error('Failed to load relievers:', error);
+    }
+  };
 
-  async function loadOrganizationsAndEmployees() {
+  const loadOrganizationsAndEmployees = async () => {
     setIsLoadingOrgs(true);
     try {
-      const [orgs, emps] = await Promise.all([
+      const [orgs, emps, rels] = await Promise.all([
         api.organizations.getAll(),
-        api.employees.getAll()
+        api.employees.getAll(),
+        api.relievers.getAll()
       ]);
       const activeOrgs = orgs.filter(o => o.status === 'Active');
       setOrganizations(activeOrgs);
       setAllEmployees(emps.filter(e => e.status === 'Active'));
+      setRelievers(rels);
 
       if (activeOrgs.length > 0) {
         setSelectedOrgId(activeOrgs[0].id);
         setRelieversOrgId(activeOrgs[0].id);
       }
     } catch (error) {
-      console.error('Failed to load initial orgs/employees:', error);
+      console.error('Failed to load initial data:', error);
     } finally {
       setIsLoadingOrgs(false);
     }
   };
 
+  useEffect(() => {
+    loadOrganizationsAndEmployees();
+  }, []);
+
   // ---------------------------------------------------------------------------
   // TAB 1: DAILY ATTENDANCE MARKING LOGIC
   // ---------------------------------------------------------------------------
-  useEffect(() => {
-    if (selectedOrgId && dailyDate && activeTab === 'daily') {
-      loadDailyAttendance();
-    }
-  }, [selectedOrgId, dailyDate, activeTab]);
-
-  async function loadDailyAttendance() {
+  const loadDailyAttendance = async () => {
     setIsLoadingDaily(true);
     try {
       const [allEmps, dateRecords] = await Promise.all([
@@ -146,7 +167,7 @@ export function Attendance() {
           newMap[emp.id] = {
             status: record.status as AttendanceStatus,
             otHours: record.overtimeHours,
-            relieverId: record.relieverEmployeeId || ''
+            relieverId: record.relieverId || record.relieverEmployeeId || ''
           };
         } else {
           newMap[emp.id] = { status: 'Present', otHours: 0, relieverId: '' };
@@ -160,6 +181,12 @@ export function Attendance() {
       setIsLoadingDaily(false);
     }
   };
+
+  useEffect(() => {
+    if (selectedOrgId && dailyDate && activeTab === 'daily') {
+      loadDailyAttendance();
+    }
+  }, [selectedOrgId, dailyDate, activeTab]);
 
   const handleDailyStatus = (empId: string, status: AttendanceStatus) => {
     setDailyAttendance(prev => {
@@ -241,12 +268,26 @@ export function Attendance() {
     try {
       const recordsToSave = dailyEmployees.map(emp => {
         const stateData = dailyAttendance[emp.id] || { status: 'Present', otHours: 0, relieverId: '' };
+        
+        let relEmpId: string | null = null;
+        let relId: string | null = null;
+
+        if (stateData.status === 'Absent' && stateData.relieverId) {
+          const isRelieverTable = relievers.some(r => r.id === stateData.relieverId);
+          if (isRelieverTable) {
+            relId = stateData.relieverId;
+          } else {
+            relEmpId = stateData.relieverId;
+          }
+        }
+
         return {
           employeeId: emp.id,
           date: dailyDate,
           status: stateData.status,
           overtimeHours: stateData.otHours,
-          relieverEmployeeId: stateData.status === 'Absent' && stateData.relieverId ? stateData.relieverId : null
+          relieverEmployeeId: relEmpId,
+          relieverId: relId
         };
       });
 
@@ -264,13 +305,7 @@ export function Attendance() {
   // ---------------------------------------------------------------------------
   // TAB 2: MONTHLY REGISTER LOGIC
   // ---------------------------------------------------------------------------
-  useEffect(() => {
-    if (selectedOrgId && registerMonth && activeTab === 'register') {
-      loadMonthlyRegister();
-    }
-  }, [selectedOrgId, registerMonth, activeTab]);
-
-  async function loadMonthlyRegister() {
+  const loadMonthlyRegister = async () => {
     setIsLoadingRegister(true);
     try {
       const [allEmps, monthRecords] = await Promise.all([
@@ -286,6 +321,12 @@ export function Attendance() {
       setIsLoadingRegister(false);
     }
   };
+
+  useEffect(() => {
+    if (selectedOrgId && registerMonth && activeTab === 'register') {
+      loadMonthlyRegister();
+    }
+  }, [selectedOrgId, registerMonth, activeTab]);
 
   // Generate days array for the selected register month
   const getRegisterDays = () => {
@@ -385,7 +426,7 @@ export function Attendance() {
     setEditingCell({ employeeId, date, employeeName });
     setEditCellStatus(existing ? (existing.status as AttendanceStatus) : 'Present');
     setEditCellOT(existing ? existing.overtimeHours : 0);
-    setEditCellReliever(existing?.relieverEmployeeId || '');
+    setEditCellReliever(existing?.relieverId || existing?.relieverEmployeeId || '');
   };
 
   const handleSaveCell = async () => {
@@ -393,12 +434,25 @@ export function Attendance() {
     setIsSavingCell(true);
     setIsSyncing(true);
     try {
+      let relEmpId: string | null = null;
+      let relId: string | null = null;
+
+      if (editCellStatus === 'Absent' && editCellReliever) {
+        const isRelieverTable = relievers.some(r => r.id === editCellReliever);
+        if (isRelieverTable) {
+          relId = editCellReliever;
+        } else {
+          relEmpId = editCellReliever;
+        }
+      }
+
       const payload = [{
         employeeId: editingCell.employeeId,
         date: editingCell.date,
         status: editCellStatus,
         overtimeHours: editCellOT,
-        relieverEmployeeId: editCellStatus === 'Absent' && editCellReliever ? editCellReliever : null
+        relieverEmployeeId: relEmpId,
+        relieverId: relId
       }];
       await api.attendance.upsertMultiple(payload);
 
@@ -411,7 +465,8 @@ export function Attendance() {
           date: editingCell.date,
           status: editCellStatus,
           overtimeHours: editCellOT,
-          relieverEmployeeId: editCellStatus === 'Absent' && editCellReliever ? editCellReliever : null
+          relieverEmployeeId: relEmpId,
+          relieverId: relId
         };
         if (index > -1) {
           const next = [...prev];
@@ -491,6 +546,18 @@ export function Attendance() {
   // ---------------------------------------------------------------------------
   // TAB 3: INDIVIDUAL SUMMARY LOGIC
   // ---------------------------------------------------------------------------
+  const loadIndividualAttendance = async () => {
+    setIsLoadingIndividual(true);
+    try {
+      const records = await api.attendance.getByEmployeeAndMonth(individualEmpId, individualMonth);
+      setIndividualRecords(records);
+    } catch (error) {
+      console.error('Failed to load individual records:', error);
+    } finally {
+      setIsLoadingIndividual(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'individual' && allEmployees.length > 0 && !individualEmpId) {
       setIndividualEmpId(allEmployees[0].id);
@@ -502,18 +569,6 @@ export function Attendance() {
       loadIndividualAttendance();
     }
   }, [individualEmpId, individualMonth, activeTab]);
-
-  async function loadIndividualAttendance() {
-    setIsLoadingIndividual(true);
-    try {
-      const records = await api.attendance.getByEmployeeAndMonth(individualEmpId, individualMonth);
-      setIndividualRecords(records);
-    } catch (error) {
-      console.error('Failed to load individual records:', error);
-    } finally {
-      setIsLoadingIndividual(false);
-    }
-  };
 
   const getIndividualDays = () => {
     if (!individualMonth) return [];
@@ -615,7 +670,7 @@ export function Attendance() {
     setEditingDay({ date });
     setEditDayStatus(existing ? (existing.status as AttendanceStatus) : 'Present');
     setEditDayOT(existing ? existing.overtimeHours : 0);
-    setEditDayReliever(existing?.relieverEmployeeId || '');
+    setEditDayReliever(existing?.relieverId || existing?.relieverEmployeeId || '');
   };
 
   const handleSaveDay = async () => {
@@ -623,12 +678,25 @@ export function Attendance() {
     setIsSavingDay(true);
     setIsSyncing(true);
     try {
+      let relEmpId: string | null = null;
+      let relId: string | null = null;
+
+      if (editDayStatus === 'Absent' && editDayReliever) {
+        const isRelieverTable = relievers.some(r => r.id === editDayReliever);
+        if (isRelieverTable) {
+          relId = editDayReliever;
+        } else {
+          relEmpId = editDayReliever;
+        }
+      }
+
       const payload = [{
         employeeId: individualEmpId,
         date: editingDay.date,
         status: editDayStatus,
         overtimeHours: editDayOT,
-        relieverEmployeeId: editDayStatus === 'Absent' && editDayReliever ? editDayReliever : null
+        relieverEmployeeId: relEmpId,
+        relieverId: relId
       }];
       await api.attendance.upsertMultiple(payload);
 
@@ -641,7 +709,8 @@ export function Attendance() {
           date: editingDay.date,
           status: editDayStatus,
           overtimeHours: editDayOT,
-          relieverEmployeeId: editDayStatus === 'Absent' && editDayReliever ? editDayReliever : null
+          relieverEmployeeId: relEmpId,
+          relieverId: relId
         };
         if (index > -1) {
           const next = [...prev];
@@ -711,13 +780,7 @@ export function Attendance() {
   // ---------------------------------------------------------------------------
   // TAB 4: RELIEVERS LIST LOGIC
   // ---------------------------------------------------------------------------
-  useEffect(() => {
-    if (activeTab === 'relievers') {
-      loadRelieverRecords();
-    }
-  }, [activeTab, relieversMonth, relieversOrgId]);
-
-  async function loadRelieverRecords() {
+  const loadRelieverRecords = async () => {
     setIsLoadingRelievers(true);
     try {
       const records = await api.attendance.getRelievers(relieversMonth);
@@ -734,6 +797,130 @@ export function Attendance() {
       console.error('Failed to load reliver records:', error);
     } finally {
       setIsLoadingRelievers(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'relievers') {
+      loadRelieverRecords();
+    }
+  }, [activeTab, relieversMonth, relieversOrgId]);
+
+  // Save an updated reliever directly from the Relievers tab
+  const handleUpdateReliever = async (rec: AttendanceRecord) => {
+    setIsSavingReliever(true);
+    setIsSyncing(true);
+    try {
+      let relEmpId: string | null = null;
+      let relId: string | null = null;
+
+      if (editingRelieverVal) {
+        const isRelieverTable = relievers.some(r => r.id === editingRelieverVal);
+        if (isRelieverTable) {
+          relId = editingRelieverVal;
+        } else {
+          relEmpId = editingRelieverVal;
+        }
+      }
+
+      const payload = [{
+        employeeId: rec.employeeId,
+        date: rec.date,
+        status: rec.status,
+        overtimeHours: rec.overtimeHours,
+        relieverEmployeeId: relEmpId,
+        relieverId: relId
+      }];
+      await api.attendance.upsertMultiple(payload);
+
+      // Update local state instantly
+      setRelieverRecords(prev =>
+        prev.map(r =>
+          r.id === rec.id
+            ? { ...r, relieverEmployeeId: relEmpId, relieverId: relId }
+            : r
+        )
+      );
+      setEditingRelieverRecId(null);
+      setEditingRelieverVal('');
+    } catch (error) {
+      console.error('Failed to update reliever:', error);
+      alert('Failed to update reliever assignment.');
+    } finally {
+      setIsSavingReliever(false);
+      setIsSyncing(false);
+    }
+  };
+
+  // Reliever Directory CRUD handlers
+  const handleSaveReliever = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRelieverForm.name) {
+      alert('Name is required');
+      return;
+    }
+    setIsSavingReliever(true);
+    try {
+      if (editingReliever) {
+        // Update
+        await api.relievers.update(editingReliever.id, {
+          name: newRelieverForm.name,
+          mobileNumber: newRelieverForm.mobileNumber,
+          designation: newRelieverForm.designation,
+          organizationId: newRelieverForm.organizationId || null,
+          notes: newRelieverForm.notes
+        });
+      } else {
+        // Create
+        await api.relievers.create({
+          name: newRelieverForm.name,
+          mobileNumber: newRelieverForm.mobileNumber,
+          designation: newRelieverForm.designation,
+          organizationId: newRelieverForm.organizationId || null,
+          notes: newRelieverForm.notes
+        });
+      }
+      setShowAddRelieverModal(false);
+      setEditingReliever(null);
+      setNewRelieverForm({
+        name: '',
+        mobileNumber: '',
+        designation: '',
+        organizationId: selectedOrgId,
+        notes: ''
+      });
+      await loadRelievers();
+      alert(editingReliever ? 'Reliever updated successfully!' : 'Reliever added successfully!');
+    } catch (error: any) {
+      console.error(error);
+      alert(`Failed to save reliever: ${error.message}`);
+    } finally {
+      setIsSavingReliever(false);
+    }
+  };
+
+  const handleEditRelieverClick = (reliever: Reliever) => {
+    setEditingReliever(reliever);
+    setNewRelieverForm({
+      name: reliever.name,
+      mobileNumber: reliever.mobileNumber || '',
+      designation: reliever.designation || '',
+      organizationId: reliever.organizationId || '',
+      notes: reliever.notes || ''
+    });
+    setShowAddRelieverModal(true);
+  };
+
+  const handleDeleteRelieverClick = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this reliever?')) return;
+    try {
+      await api.relievers.delete(id);
+      await loadRelievers();
+      await loadRelieverRecords();
+      alert('Reliever deleted successfully!');
+    } catch (error: any) {
+      console.error(error);
+      alert(`Failed to delete reliever: ${error.message}`);
     }
   };
 
@@ -1055,12 +1242,22 @@ export function Attendance() {
                               className="w-full px-2 py-1.5 text-xs border border-orange-200 bg-orange-50 rounded-lg focus:ring-2 focus:ring-orange-400 font-semibold text-gray-700 transition-all"
                             >
                               <option value="">— No Reliever —</option>
-                              {dailyEmployees
-                                .filter(e => e.id !== emp.id)
-                                .map(e => (
-                                  <option key={e.id} value={e.id}>{e.name}</option>
-                                ))
-                              }
+                              <optgroup label="Registered Relievers">
+                                {relievers
+                                  .filter(r => r.organizationId === selectedOrgId)
+                                  .map(r => (
+                                    <option key={r.id} value={r.id}>{r.name} ({r.designation || 'Reliever'})</option>
+                                  ))
+                                }
+                              </optgroup>
+                              <optgroup label="Employees">
+                                {dailyEmployees
+                                  .filter(e => e.id !== emp.id)
+                                  .map(e => (
+                                    <option key={e.id} value={e.id}>{e.name} ({e.designation || 'Staff'})</option>
+                                  ))
+                                }
+                              </optgroup>
                             </select>
                           ) : (
                             <span className="text-xs text-gray-300 font-semibold">N/A</span>
@@ -1287,7 +1484,7 @@ export function Attendance() {
                           const record = registerRecords.find(r => r.employeeId === emp.id && r.date === dayStr);
                           const status = record ? (record.status as AttendanceStatus) : null;
                           const ot = record ? record.overtimeHours : 0;
-                          const hasReliever = !!(record?.relieverEmployeeId);
+                          const hasReliever = !!(record?.relieverId || record?.relieverEmployeeId);
                           
                           let cellContent = '-';
                           let cellClass = 'bg-gray-50 text-gray-400 border border-gray-100 border-dashed hover:bg-gray-100';
@@ -1302,14 +1499,16 @@ export function Attendance() {
                             else if (status === 'Week Off') cellClass = 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200';
                           }
 
-                          const relieverEmp = hasReliever ? allEmployees.find(e => e.id === record?.relieverEmployeeId) : null;
+                          const relieverEmp = record?.relieverEmployeeId ? allEmployees.find(e => e.id === record.relieverEmployeeId) : null;
+                          const relieverTable = record?.relieverId ? relievers.find(r => r.id === record.relieverId) : null;
+                          const relieverName = relieverTable?.name || relieverEmp?.name || 'Assigned';
 
                           return (
                             <td key={dayStr} className="p-1 text-center">
                               <button
                                 onClick={() => handleCellClick(emp.id, dayStr)}
                                 onDoubleClick={() => handleOpenEditCell(emp.id, dayStr, emp.name)}
-                                title={`${emp.name} on ${dayStr}${hasReliever ? ` | Reliever: ${relieverEmp?.name || 'Assigned'}` : ''} (Double click for details)${ot > 0 ? ` (OT: ${ot}h)` : ''}`}
+                                title={`${emp.name} on ${dayStr}${hasReliever ? ` | Reliever: ${relieverName}` : ''} (Double click for details)${ot > 0 ? ` (OT: ${ot}h)` : ''}`}
                                 className={`w-8 h-8 rounded-lg text-[10px] font-black flex items-center justify-center mx-auto transition-all cursor-pointer relative ${cellClass}`}
                               >
                                 {cellContent}
@@ -1317,7 +1516,7 @@ export function Attendance() {
                                   <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-blue-600 border border-white rounded-full" title={`OT: ${ot} hours`} />
                                 )}
                                 {hasReliever && (
-                                  <span className="absolute -top-0.5 -left-0.5 w-2.5 h-2.5 bg-orange-500 border border-white rounded-full" title={`Reliever: ${relieverEmp?.name}`} />
+                                  <span className="absolute -top-0.5 -left-0.5 w-2.5 h-2.5 bg-orange-500 border border-white rounded-full" title={`Reliever: ${relieverName}`} />
                                 )}
                               </button>
                             </td>
@@ -1407,12 +1606,22 @@ export function Attendance() {
                         className="w-full px-3 py-2 border border-orange-200 bg-orange-50 rounded-xl font-semibold focus:ring-2 focus:ring-orange-400/30 text-gray-700 text-sm"
                       >
                         <option value="">— No Reliever —</option>
-                        {allEmployees
-                          .filter(e => e.id !== editingCell.employeeId)
-                          .map(e => (
-                            <option key={e.id} value={e.id}>{e.name} ({e.designation || 'Staff'})</option>
-                          ))
-                        }
+                        <optgroup label="Registered Relievers">
+                          {relievers
+                            .filter(r => r.organizationId === selectedOrgId)
+                            .map(r => (
+                              <option key={r.id} value={r.id}>{r.name} ({r.designation || 'Reliever'})</option>
+                            ))
+                          }
+                        </optgroup>
+                        <optgroup label="Employees">
+                          {allEmployees
+                            .filter(e => e.id !== editingCell.employeeId && e.organizationId === selectedOrgId)
+                            .map(e => (
+                              <option key={e.id} value={e.id}>{e.name} ({e.designation || 'Staff'})</option>
+                            ))
+                          }
+                        </optgroup>
                       </select>
                     </div>
                   )}
@@ -1691,7 +1900,7 @@ export function Attendance() {
                         const record = individualRecords.find(r => r.date === dayStr);
                         const status = record ? (record.status as AttendanceStatus) : null;
                         const ot = record ? record.overtimeHours : 0;
-                        const hasReliever = !!(record?.relieverEmployeeId);
+                        const hasReliever = !!(record?.relieverId || record?.relieverEmployeeId);
                         
                         let badgeClass = 'bg-gray-50 text-gray-400 border border-gray-100 border-dashed hover:bg-gray-100';
                         if (status) {
@@ -1802,12 +2011,28 @@ export function Attendance() {
                         className="w-full px-3 py-2 border border-orange-200 bg-orange-50 rounded-xl font-semibold focus:ring-2 focus:ring-orange-400/30 text-gray-700 text-sm"
                       >
                         <option value="">— No Reliever —</option>
-                        {allEmployees
-                          .filter(e => e.id !== individualEmpId)
-                          .map(e => (
-                            <option key={e.id} value={e.id}>{e.name} ({e.designation || 'Staff'})</option>
-                          ))
-                        }
+                        <optgroup label="Registered Relievers">
+                          {relievers
+                            .filter(r => {
+                              const emp = allEmployees.find(e => e.id === individualEmpId);
+                              return emp ? r.organizationId === emp.organizationId : true;
+                            })
+                            .map(r => (
+                              <option key={r.id} value={r.id}>{r.name} ({r.designation || 'Reliever'})</option>
+                            ))
+                          }
+                        </optgroup>
+                        <optgroup label="Employees">
+                          {allEmployees
+                            .filter(e => {
+                              const emp = allEmployees.find(el => el.id === individualEmpId);
+                              return e.id !== individualEmpId && (emp ? e.organizationId === emp.organizationId : true);
+                            })
+                            .map(e => (
+                              <option key={e.id} value={e.id}>{e.name} ({e.designation || 'Staff'})</option>
+                            ))
+                          }
+                        </optgroup>
                       </select>
                     </div>
                   )}
@@ -1840,108 +2065,394 @@ export function Attendance() {
           TAB 4: RELIEVERS LIST CONTENT
           ----------------------------------------------------------------------- */}
       {activeTab === 'relievers' && (
-        <div className="space-y-6">
-
-          {/* Header summary card */}
-          <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
-            <div className="flex items-center justify-between mb-1">
-              <h2 className="text-base font-black text-gray-900 flex items-center gap-2">
-                <Users className="w-5 h-5 text-orange-500" />
-                Reliever Assignments
-              </h2>
-              <span className="text-xs font-bold px-3 py-1 bg-orange-50 text-orange-600 border border-orange-100 rounded-full">
-                {relieverRecords.length} Record{relieverRecords.length !== 1 ? 's' : ''}
-              </span>
+        <div className="space-y-6 animate-fade-in">
+          
+          {/* SECTION 1: RELIEVER DIRECTORY */}
+          <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <div>
+                <h2 className="text-base font-black text-gray-900 flex items-center gap-2">
+                  <Users className="w-5 h-5 text-orange-500" />
+                  Reliever Directory
+                </h2>
+                <p className="text-xs text-gray-400 font-semibold mt-0.5">
+                  Manage external or standalone reliever profiles.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setEditingReliever(null);
+                  setNewRelieverForm({
+                    name: '',
+                    mobileNumber: '',
+                    designation: '',
+                    organizationId: relieversOrgId || (organizations[0]?.id || ''),
+                    notes: ''
+                  });
+                  setShowAddRelieverModal(true);
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-xl shadow-md shadow-orange-600/10 transition cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                Add Reliever
+              </button>
             </div>
-            <p className="text-xs text-gray-400 font-semibold">
-              Showing all absent employees with assigned relievers for {format(new Date(relieversMonth + '-01T00:00:00'), 'MMMM yyyy')}.
-            </p>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-sm">
+                <thead className="bg-gray-50/50 border-b border-gray-200 text-xs text-gray-400 font-bold uppercase tracking-wider">
+                  <tr>
+                    <th className="p-4 font-black w-12 text-center">#</th>
+                    <th className="p-4 font-black">Name</th>
+                    <th className="p-4 font-black">Mobile</th>
+                    <th className="p-4 font-black">Designation</th>
+                    <th className="p-4 font-black">Organization</th>
+                    <th className="p-4 font-black">Notes</th>
+                    <th className="p-4 font-black text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 font-semibold text-gray-700">
+                  {relievers.filter(r => !relieversOrgId || r.organizationId === relieversOrgId).length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-10 text-center text-gray-400 font-medium">
+                        No relievers registered for this organization.
+                      </td>
+                    </tr>
+                  ) : (
+                    relievers
+                      .filter(r => !relieversOrgId || r.organizationId === relieversOrgId)
+                      .map((rel, index) => {
+                        const org = organizations.find(o => o.id === rel.organizationId);
+                        return (
+                          <tr key={rel.id} className="hover:bg-gray-50/40 transition-colors">
+                            <td className="p-4 text-xs text-gray-400 font-bold text-center">{index + 1}</td>
+                            <td className="p-4 font-bold text-gray-900">{rel.name}</td>
+                            <td className="p-4">{rel.mobileNumber || '—'}</td>
+                            <td className="p-4">
+                              <span className="px-2.5 py-1 text-xs bg-orange-50 text-orange-700 border border-orange-100 rounded-lg">
+                                {rel.designation || 'Reliever'}
+                              </span>
+                            </td>
+                            <td className="p-4">{org?.name || 'All Organizations'}</td>
+                            <td className="p-4 text-xs text-gray-400 max-w-[200px] truncate" title={rel.notes}>{rel.notes || '—'}</td>
+                            <td className="p-4">
+                              <div className="flex gap-2 justify-center">
+                                <button
+                                  onClick={() => handleEditRelieverClick(rel)}
+                                  className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-gray-50 transition cursor-pointer"
+                                  title="Edit"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteRelieverClick(rel.id)}
+                                  className="p-1.5 text-gray-400 hover:text-rose-600 rounded-lg hover:bg-gray-50 transition cursor-pointer"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
-          {/* Reliever Table */}
-          <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
-            {isLoadingRelievers ? (
-              <div className="flex flex-col items-center justify-center p-16 text-gray-400">
-                <Loader2 className="w-8 h-8 animate-spin mb-2 text-orange-500" />
-                <p className="font-semibold text-sm">Loading reliever records...</p>
+          {/* SECTION 2: RELIEVER ASSIGNMENTS */}
+          <div className="space-y-6">
+            <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="text-base font-black text-gray-900 flex items-center gap-2">
+                  <CalendarIcon className="w-5 h-5 text-orange-500" />
+                  Monthly Reliever Assignments
+                </h2>
+                <span className="text-xs font-bold px-3 py-1 bg-orange-50 text-orange-600 border border-orange-100 rounded-full">
+                  {relieverRecords.length} Record{relieverRecords.length !== 1 ? 's' : ''}
+                </span>
               </div>
-            ) : relieverRecords.length === 0 ? (
-              <div className="flex flex-col items-center justify-center p-16 text-gray-400">
-                <Users className="w-12 h-12 mb-3 opacity-20" />
-                <p className="font-bold text-sm">No Reliever Records Found</p>
-                <p className="text-xs mt-1">No absent employees have been assigned a reliever for this month.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-sm">
-                  <thead className="bg-gray-50/80 border-b border-gray-200">
-                    <tr className="text-xs text-gray-400 font-bold uppercase tracking-wider">
-                      <th className="p-4 font-black">#</th>
-                      <th className="p-4 font-black">Date</th>
-                      <th className="p-4 font-black">Absent Employee</th>
-                      <th className="p-4 font-black">Dept / Designation</th>
-                      <th className="p-4 font-black">Reliever Assigned</th>
-                      <th className="p-4 font-black">Reliever Dept</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {relieverRecords.map((rec, index) => {
-                      const absentEmp = allEmployees.find(e => e.id === rec.employeeId);
-                      const relieverEmp = rec.relieverEmployeeId ? allEmployees.find(e => e.id === rec.relieverEmployeeId) : null;
-                      
-                      return (
-                        <tr key={rec.id || index} className="hover:bg-gray-50/40 transition-colors">
-                          <td className="p-4 text-xs text-gray-400 font-bold">{index + 1}</td>
-                          <td className="p-4">
-                            <div className="font-bold text-gray-700">
-                              {format(new Date(rec.date + 'T00:00:00'), 'dd MMM yyyy')}
-                            </div>
-                            <div className="text-[10px] text-gray-400 font-semibold">
-                              {format(new Date(rec.date + 'T00:00:00'), 'EEEE')}
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <div className="flex items-center gap-2.5">
-                              <div className="w-8 h-8 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center text-xs font-black flex-shrink-0">
-                                {absentEmp ? absentEmp.name.split(' ').map(n => n[0]).join('').slice(0,2) : 'A'}
+              <p className="text-xs text-gray-400 font-semibold">
+                Showing all absent employees with assigned relievers for {format(new Date(relieversMonth + '-01T00:00:00'), 'MMMM yyyy')}.
+              </p>
+            </div>
+
+            <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+              {isLoadingRelievers ? (
+                <div className="flex flex-col items-center justify-center p-16 text-gray-400">
+                  <Loader2 className="w-8 h-8 animate-spin mb-2 text-orange-500" />
+                  <p className="font-semibold text-sm">Loading reliever records...</p>
+                </div>
+              ) : relieverRecords.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-16 text-gray-400">
+                  <Users className="w-12 h-12 mb-3 opacity-20" />
+                  <p className="font-bold text-sm">No Reliever Records Found</p>
+                  <p className="text-xs mt-1">No absent employees have been assigned a reliever for this month.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-sm">
+                    <thead className="bg-gray-50/80 border-b border-gray-200 text-xs text-gray-400 font-bold uppercase tracking-wider">
+                      <tr>
+                        <th className="p-4 font-black">#</th>
+                        <th className="p-4 font-black">Date</th>
+                        <th className="p-4 font-black">Absent Employee</th>
+                        <th className="p-4 font-black">Dept / Designation</th>
+                        <th className="p-4 font-black">Reliever Assigned</th>
+                        <th className="p-4 font-black">Reliever Details</th>
+                        <th className="p-4 font-black text-center">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 font-semibold text-gray-700">
+                      {relieverRecords.map((rec, index) => {
+                        const absentEmp = allEmployees.find(e => e.id === rec.employeeId);
+                        const relieverEmp = rec.relieverEmployeeId ? allEmployees.find(e => e.id === rec.relieverEmployeeId) : null;
+                        const relieverTable = rec.relieverId ? relievers.find(r => r.id === rec.relieverId) : null;
+                        const isEditing = editingRelieverRecId === rec.id;
+
+                        return (
+                          <tr key={rec.id || index} className={`transition-colors ${isEditing ? 'bg-orange-50/60' : 'hover:bg-gray-50/40'}`}>
+                            <td className="p-4 text-xs text-gray-400 font-bold">{index + 1}</td>
+                            <td className="p-4">
+                              <div className="font-bold text-gray-700">
+                                {format(new Date(rec.date + 'T00:00:00'), 'dd MMM yyyy')}
                               </div>
-                              <div>
-                                <div className="font-bold text-gray-900 text-sm">{absentEmp?.name || 'Unknown Employee'}</div>
-                                <div className="text-[10px] text-gray-400 font-semibold">{absentEmp?.mobileNumber || ''}</div>
+                              <div className="text-[10px] text-gray-400 font-semibold">
+                                {format(new Date(rec.date + 'T00:00:00'), 'EEEE')}
                               </div>
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <div className="text-xs font-semibold text-gray-700">{absentEmp?.designation || 'Staff'}</div>
-                            <div className="text-[10px] text-gray-400 font-semibold">{absentEmp?.department || 'N/A'}</div>
-                          </td>
-                          <td className="p-4">
-                            {relieverEmp ? (
+                            </td>
+                            <td className="p-4">
                               <div className="flex items-center gap-2.5">
-                                <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-700 flex items-center justify-center text-xs font-black flex-shrink-0">
-                                  {relieverEmp.name.split(' ').map(n => n[0]).join('').slice(0,2)}
+                                <div className="w-8 h-8 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center text-xs font-black flex-shrink-0">
+                                  {absentEmp ? absentEmp.name.split(' ').map(n => n[0]).join('').slice(0,2) : 'A'}
                                 </div>
                                 <div>
-                                  <div className="font-bold text-gray-900 text-sm">{relieverEmp.name}</div>
-                                  <div className="text-[10px] text-gray-400 font-semibold">{relieverEmp.mobileNumber}</div>
+                                  <div className="font-bold text-gray-900 text-sm">{absentEmp?.name || 'Unknown Employee'}</div>
+                                  <div className="text-[10px] text-gray-400 font-semibold">{absentEmp?.mobileNumber || ''}</div>
                                 </div>
                               </div>
-                            ) : (
-                              <span className="text-xs text-gray-300 font-semibold italic">Not Assigned</span>
-                            )}
-                          </td>
-                          <td className="p-4">
-                            <div className="text-xs font-semibold text-gray-700">{relieverEmp?.designation || '—'}</div>
-                            <div className="text-[10px] text-gray-400 font-semibold">{relieverEmp?.department || '—'}</div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                            </td>
+                            <td className="p-4">
+                              <div className="text-xs font-semibold text-gray-700">{absentEmp?.designation || 'Staff'}</div>
+                              <div className="text-[10px] text-gray-400 font-semibold">{absentEmp?.department || 'N/A'}</div>
+                            </td>
+                            <td className="p-4">
+                              {isEditing ? (
+                                <select
+                                  value={editingRelieverVal}
+                                  onChange={e => setEditingRelieverVal(e.target.value)}
+                                  className="w-full px-2 py-1.5 text-xs border border-orange-300 bg-white rounded-lg focus:ring-2 focus:ring-orange-400 font-semibold text-gray-700 min-w-[160px]"
+                                  autoFocus
+                                >
+                                  <option value="">— No Reliever —</option>
+                                  <optgroup label="Registered Relievers">
+                                    {relievers
+                                      .filter(r => !relieversOrgId || r.organizationId === relieversOrgId)
+                                      .map(r => (
+                                        <option key={r.id} value={r.id}>
+                                          {r.name} ({r.designation || 'Reliever'})
+                                        </option>
+                                      ))
+                                    }
+                                  </optgroup>
+                                  <optgroup label="Employees">
+                                    {allEmployees
+                                      .filter(e => e.id !== rec.employeeId && (!relieversOrgId || e.organizationId === relieversOrgId))
+                                      .map(e => (
+                                        <option key={e.id} value={e.id}>
+                                          {e.name} ({e.designation || 'Staff'})
+                                        </option>
+                                      ))
+                                    }
+                                  </optgroup>
+                                </select>
+                              ) : relieverTable || relieverEmp ? (
+                                <div className="flex items-center gap-2.5">
+                                  <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-700 flex items-center justify-center text-xs font-black flex-shrink-0">
+                                    {(relieverTable?.name || relieverEmp?.name || 'R').split(' ').map(n => n[0]).join('').slice(0,2)}
+                                  </div>
+                                  <div>
+                                    <div className="font-bold text-gray-900 text-sm">{relieverTable?.name || relieverEmp?.name}</div>
+                                    <div className="text-[10px] text-gray-400 font-semibold">{relieverTable?.mobileNumber || relieverEmp?.mobileNumber}</div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-gray-300 font-semibold italic">Not Assigned</span>
+                              )}
+                            </td>
+                            <td className="p-4">
+                              {isEditing ? (
+                                <div className="text-xs text-orange-500 font-semibold">
+                                  {editingRelieverVal
+                                    ? (() => {
+                                        const selEmp = allEmployees.find(e => e.id === editingRelieverVal);
+                                        const selRel = relievers.find(r => r.id === editingRelieverVal);
+                                        return (
+                                          <>
+                                            <div className="font-bold text-gray-900">{selRel?.designation || selEmp?.designation || '—'}</div>
+                                            <div className="text-[10px] text-gray-400">{selEmp?.department || 'External Reliever'}</div>
+                                          </>
+                                        );
+                                      })()
+                                    : <span className="italic text-gray-300">None</span>
+                                  }
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="text-xs font-semibold text-gray-700">{relieverTable?.designation || relieverEmp?.designation || '—'}</div>
+                                  <div className="text-[10px] text-gray-400 font-semibold">{relieverEmp?.department || (relieverTable ? 'External Reliever' : '—')}</div>
+                                </>
+                              )}
+                            </td>
+                            <td className="p-4 text-center">
+                              {isEditing ? (
+                                <div className="flex gap-1.5 justify-center">
+                                  <button
+                                    onClick={() => handleUpdateReliever(rec)}
+                                    disabled={isSavingReliever}
+                                    className="px-3 py-1.5 text-[10px] font-black bg-orange-500 hover:bg-orange-600 text-white rounded-lg flex items-center gap-1 transition cursor-pointer disabled:opacity-60"
+                                  >
+                                    {isSavingReliever ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                                    Save
+                                  </button>
+                                  <button
+                                    onClick={() => { setEditingRelieverRecId(null); setEditingRelieverVal(''); }}
+                                    className="px-3 py-1.5 text-[10px] font-bold bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition cursor-pointer"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => {
+                                    setEditingRelieverRecId(rec.id || null);
+                                    setEditingRelieverVal(rec.relieverId || rec.relieverEmployeeId || '');
+                                  }}
+                                  className="px-3 py-1.5 text-[10px] font-bold bg-gray-100 hover:bg-orange-100 hover:text-orange-700 text-gray-600 border border-gray-200 rounded-lg transition cursor-pointer flex items-center gap-1 mx-auto"
+                                >
+                                  ✏️ Edit
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* ADD / EDIT RELIEVER MODAL */}
+          {showAddRelieverModal && (
+            <div className="fixed inset-0 bg-gray-900/50 flex items-center justify-center z-50 p-4 animate-fade-in">
+              <form onSubmit={handleSaveReliever} className="bg-white rounded-2xl border border-gray-200 shadow-xl w-full max-w-md overflow-hidden transform transition-all scale-100 p-6 space-y-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="font-bold text-gray-900 text-lg">{editingReliever ? 'Edit Reliever Profile' : 'Register New Reliever'}</h3>
+                    <p className="text-xs text-gray-400 font-semibold mt-0.5">Fill in reliever details below.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddRelieverModal(false);
+                      setEditingReliever(null);
+                    }}
+                    className="text-gray-400 hover:text-gray-600 p-1 leading-none rounded-lg hover:bg-gray-50"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5">Full Name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={newRelieverForm.name}
+                      onChange={e => setNewRelieverForm(prev => ({ ...prev, name: e.target.value }))}
+                      placeholder="e.g. John Doe"
+                      className="w-full px-3.5 py-2 border border-gray-200 rounded-xl bg-white font-semibold focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 text-sm"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5">Mobile Number</label>
+                      <input
+                        type="tel"
+                        value={newRelieverForm.mobileNumber}
+                        onChange={e => setNewRelieverForm(prev => ({ ...prev, mobileNumber: e.target.value }))}
+                        placeholder="e.g. 9876543210"
+                        className="w-full px-3.5 py-2 border border-gray-200 rounded-xl bg-white font-semibold focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5">Designation</label>
+                      <input
+                        type="text"
+                        value={newRelieverForm.designation}
+                        onChange={e => setNewRelieverForm(prev => ({ ...prev, designation: e.target.value }))}
+                        placeholder="e.g. Operator"
+                        className="w-full px-3.5 py-2 border border-gray-200 rounded-xl bg-white font-semibold focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5">Primary Organization</label>
+                    <select
+                      value={newRelieverForm.organizationId}
+                      onChange={e => setNewRelieverForm(prev => ({ ...prev, organizationId: e.target.value }))}
+                      className="w-full px-3.5 py-2.5 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 font-semibold text-gray-700 text-sm"
+                    >
+                      <option value="">— All Organizations —</option>
+                      {organizations.map(o => (
+                        <option key={o.id} value={o.id}>{o.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5">Notes / Remarks</label>
+                    <textarea
+                      value={newRelieverForm.notes}
+                      onChange={e => setNewRelieverForm(prev => ({ ...prev, notes: e.target.value }))}
+                      placeholder="Add experience, skill level, or schedule notes..."
+                      rows={3}
+                      className="w-full px-3.5 py-2 border border-gray-200 rounded-xl bg-white font-semibold focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 text-sm resize-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddRelieverModal(false);
+                      setEditingReliever(null);
+                    }}
+                    className="flex-1 py-2 text-xs font-bold border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingReliever}
+                    className="flex-1 py-2 text-xs font-bold bg-orange-600 hover:bg-orange-700 text-white rounded-xl shadow-md shadow-orange-500/10 flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    {isSavingReliever ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    {editingReliever ? 'Update Profile' : 'Register Profile'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
         </div>
       )}
 

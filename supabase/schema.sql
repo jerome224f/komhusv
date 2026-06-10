@@ -59,17 +59,30 @@ CREATE TABLE IF NOT EXISTS employees (
   overtime_rate_per_hour  NUMERIC(12, 2) DEFAULT 0
 );
 
--- 5. ATTENDANCE RECORDS TABLE
+-- 5. RELIEVERS TABLE (must be created BEFORE attendance_records which references it)
+CREATE TABLE IF NOT EXISTS relievers (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name            TEXT NOT NULL,
+  mobile_number   TEXT,
+  designation     TEXT,
+  organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+  notes           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 6. ATTENDANCE RECORDS TABLE
 CREATE TABLE IF NOT EXISTS attendance_records (
-  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  employee_id    UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  date           DATE NOT NULL,
-  status         TEXT NOT NULL CHECK (status IN ('Present', 'Absent', 'Half Day', 'Leave', 'Holiday', 'Week Off')),
-  overtime_hours NUMERIC(5, 2) DEFAULT 0,
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id           UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  date                  DATE NOT NULL,
+  status                TEXT NOT NULL CHECK (status IN ('Present', 'Absent', 'Half Day', 'Leave', 'Holiday', 'Week Off')),
+  overtime_hours        NUMERIC(5, 2) DEFAULT 0,
+  reliever_employee_id  UUID REFERENCES employees(id) ON DELETE SET NULL,
+  reliever_id           UUID REFERENCES relievers(id) ON DELETE SET NULL,
   UNIQUE(employee_id, date)
 );
 
--- 6. ADVANCES TABLE
+-- 7. ADVANCES TABLE
 CREATE TABLE IF NOT EXISTS advances (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
@@ -78,7 +91,7 @@ CREATE TABLE IF NOT EXISTS advances (
   remarks     TEXT
 );
 
--- 7. PAYROLLS TABLE
+-- 8. PAYROLLS TABLE
 CREATE TABLE IF NOT EXISTS payrolls (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   employee_id         UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
@@ -94,7 +107,7 @@ CREATE TABLE IF NOT EXISTS payrolls (
   UNIQUE(employee_id, month)
 );
 
--- 8. ACTIVITY LOGS TABLE
+-- 9. ACTIVITY LOGS TABLE
 CREATE TABLE IF NOT EXISTS activity_logs (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   timestamp   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -102,7 +115,7 @@ CREATE TABLE IF NOT EXISTS activity_logs (
   description TEXT
 );
 
--- 9. SYSTEM NOTIFICATIONS TABLE
+-- 10. SYSTEM NOTIFICATIONS TABLE
 CREATE TABLE IF NOT EXISTS system_notifications (
   id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title     TEXT NOT NULL,
@@ -113,22 +126,38 @@ CREATE TABLE IF NOT EXISTS system_notifications (
 );
 
 -- ============================================================
--- ROW LEVEL SECURITY - Allow anon key full access
+-- ROW LEVEL SECURITY - Allow anon key full access (development)
 -- ============================================================
 ALTER TABLE users                ENABLE ROW LEVEL SECURITY;
 ALTER TABLE organizations        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE departments          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE employees            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE relievers            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE attendance_records   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE advances             ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payrolls             ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_logs        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_notifications ENABLE ROW LEVEL SECURITY;
 
+-- Drop existing policies to avoid conflicts on re-run
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "allow_all_users"                ON users;
+  DROP POLICY IF EXISTS "allow_all_organizations"        ON organizations;
+  DROP POLICY IF EXISTS "allow_all_departments"          ON departments;
+  DROP POLICY IF EXISTS "allow_all_employees"            ON employees;
+  DROP POLICY IF EXISTS "allow_all_relievers"            ON relievers;
+  DROP POLICY IF EXISTS "allow_all_attendance_records"   ON attendance_records;
+  DROP POLICY IF EXISTS "allow_all_advances"             ON advances;
+  DROP POLICY IF EXISTS "allow_all_payrolls"             ON payrolls;
+  DROP POLICY IF EXISTS "allow_all_activity_logs"        ON activity_logs;
+  DROP POLICY IF EXISTS "allow_all_system_notifications" ON system_notifications;
+END $$;
+
 CREATE POLICY "allow_all_users"                ON users                FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all_organizations"        ON organizations        FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all_departments"          ON departments          FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all_employees"            ON employees            FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all_relievers"            ON relievers            FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all_attendance_records"   ON attendance_records   FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all_advances"             ON advances             FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all_payrolls"             ON payrolls             FOR ALL TO anon USING (true) WITH CHECK (true);

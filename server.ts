@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
+import crypto from 'crypto';
 
 // ESM __dirname shim
 const __filename = fileURLToPath(import.meta.url);
@@ -106,7 +107,9 @@ app.get('/api/dashboard/stats', async (req, res) => {
       { data: activeEmps, error: activeEmpsError },
       { data: activeOrgs, error: activeOrgsError },
       { data: payrollsThisMonth, error: prError },
-      { data: allAttendance, error: allAttError }
+      { data: allAttendance, error: allAttError },
+      { data: relieversList, error: relListError },
+      { count: relCount, error: relCountError }
     ] = await Promise.all([
       supabase.from('organizations').select('id', { count: 'exact', head: true }).eq('status', 'Active'),
       supabase.from('employees').select('id', { count: 'exact', head: true }).eq('status', 'Active'),
@@ -114,7 +117,9 @@ app.get('/api/dashboard/stats', async (req, res) => {
       supabase.from('employees').select('*').eq('status', 'Active'),
       supabase.from('organizations').select('*').eq('status', 'Active'),
       supabase.from('payrolls').select('net_salary').eq('month', currentMonth),
-      supabase.from('attendance_records').select('*')
+      supabase.from('attendance_records').select('*'),
+      supabase.from('relievers').select('*'),
+      supabase.from('relievers').select('id', { count: 'exact', head: true })
     ]);
 
     if (orgError) throw orgError;
@@ -124,16 +129,20 @@ app.get('/api/dashboard/stats', async (req, res) => {
     if (activeOrgsError) throw activeOrgsError;
     if (prError) throw prError;
     if (allAttError) throw allAttError;
+    if (relListError) throw relListError;
+    if (relCountError) throw relCountError;
 
     // Daily statistics
     let presentToday = 0;
     let absentToday = 0;
     let leaveToday = 0;
+    let relieversToday = 0;
     const absentEmployeesToday: any[] = [];
 
     const attTodayList = attendanceToday || [];
     const empList = activeEmps || [];
     const orgList = activeOrgs || [];
+    const relList = relieversList || [];
 
     attTodayList.forEach((att: any) => {
       if (att.status === 'Present' || att.status === 'Half Day') presentToday++;
@@ -144,9 +153,25 @@ app.get('/api/dashboard/stats', async (req, res) => {
         if (emp) {
           const org = orgList.find((o: any) => o.id === emp.organization_id);
           if (org) {
+            let relieverInfo: any = null;
+            if (att.reliever_id) {
+              const rel = relList.find((r: any) => r.id === att.reliever_id);
+              if (rel) {
+                relieverInfo = { name: rel.name, type: 'External' };
+              }
+            } else if (att.reliever_employee_id) {
+              const relEmp = empList.find((e: any) => e.id === att.reliever_employee_id);
+              if (relEmp) {
+                relieverInfo = { name: relEmp.name, type: 'Internal' };
+              }
+            }
+            if (relieverInfo) {
+              relieversToday++;
+            }
             absentEmployeesToday.push({
               employee: toCamel(emp),
-              org: toCamel(org)
+              org: toCamel(org),
+              reliever: relieverInfo
             });
           }
         }
@@ -200,13 +225,16 @@ app.get('/api/dashboard/stats', async (req, res) => {
       leaveToday,
       payrollCost,
       absentEmployeesToday,
-      heatmapData
+      heatmapData,
+      totalRelievers: relCount || 0,
+      relieversToday
     });
   } catch (error: any) {
     console.error('Error generating dashboard stats:', error);
     res.status(500).json({ error: error.message });
   }
 });
+
 
 // ----------------------------------------------------
 // ORGANIZATIONS
@@ -379,13 +407,62 @@ app.delete('/api/employees/:id', async (req, res) => {
 // ----------------------------------------------------
 app.get('/api/attendance', async (req, res) => {
   try {
-    const { date, employeeId } = req.query;
+    const { date, employeeId, month } = req.query;
     let query = supabase.from('attendance_records').select('*');
 
-    if (date) query = query.eq('date', date as string);
+    // Support both exact date and month-range filters
+    if (date) {
+      const dateStr = date as string;
+      if (dateStr.length === 7) {
+        // YYYY-MM format: filter by month range
+        const [year, mon] = dateStr.split('-');
+        const startDate = `${year}-${mon}-01`;
+        const lastDay = new Date(parseInt(year), parseInt(mon), 0).getDate();
+        const endDate = `${year}-${mon}-${String(lastDay).padStart(2, '0')}`;
+        query = query.gte('date', startDate).lte('date', endDate);
+      } else {
+        // YYYY-MM-DD exact date
+        query = query.eq('date', dateStr);
+      }
+    }
+    if (month) {
+      const monthStr = month as string;
+      const [year, mon] = monthStr.split('-');
+      const startDate = `${year}-${mon}-01`;
+      const lastDay = new Date(parseInt(year), parseInt(mon), 0).getDate();
+      const endDate = `${year}-${mon}-${String(lastDay).padStart(2, '0')}`;
+      query = query.gte('date', startDate).lte('date', endDate);
+    }
     if (employeeId) query = query.eq('employee_id', employeeId as string);
 
     const { data, error } = await query;
+    if (error) throw error;
+    res.json(toCamel(data));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/attendance/relievers - get all attendance records with relievers
+app.get('/api/attendance/relievers', async (req, res) => {
+  try {
+    const { date, orgId } = req.query;
+    let query = supabase
+      .from('attendance_records')
+      .select('*')
+      .or('reliever_employee_id.not.is.null,reliever_id.not.is.null');
+
+    if (date && (date as string).length === 7) {
+      const [year, mon] = (date as string).split('-');
+      const startDate = `${year}-${mon}-01`;
+      const lastDay = new Date(parseInt(year), parseInt(mon), 0).getDate();
+      const endDate = `${year}-${mon}-${String(lastDay).padStart(2, '0')}`;
+      query = query.gte('date', startDate).lte('date', endDate);
+    } else if (date) {
+      query = query.eq('date', date as string);
+    }
+
+    const { data, error } = await query.order('date', { ascending: false });
     if (error) throw error;
     res.json(toCamel(data));
   } catch (error: any) {
@@ -412,23 +489,34 @@ app.post('/api/attendance/upsert', async (req, res) => {
 
       if (checkError) throw checkError;
 
+      const updatePayload: any = {
+        status: record.status,
+        overtime_hours: record.overtime_hours
+      };
+      // Include reliever_employee_id if provided
+      if ('reliever_employee_id' in record) {
+        updatePayload.reliever_employee_id = record.reliever_employee_id;
+      }
+      // Include reliever_id (new relievers table FK) if provided
+      if ('reliever_id' in record) {
+        updatePayload.reliever_id = record.reliever_id;
+      }
+
       if (existing && existing.length > 0) {
         // Update
         const { error: updateError } = await supabase
           .from('attendance_records')
-          .update({
-            status: record.status,
-            overtime_hours: record.overtime_hours
-          })
+          .update(updatePayload)
           .eq('id', existing[0].id);
 
         if (updateError) throw updateError;
       } else {
         // Insert
         if (!record.id) record.id = crypto.randomUUID();
+        const insertPayload = { ...record, ...updatePayload };
         const { error: insertError } = await supabase
           .from('attendance_records')
-          .insert([record]);
+          .insert([insertPayload]);
 
         if (insertError) throw insertError;
       }
@@ -440,6 +528,77 @@ app.post('/api/attendance/upsert', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ----------------------------------------------------
+// RELIEVERS
+// ----------------------------------------------------
+app.get('/api/relievers', async (req, res) => {
+  try {
+    const { orgId } = req.query;
+    let query = supabase.from('relievers').select('*').order('name');
+    if (orgId) query = query.eq('organization_id', orgId as string);
+
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(toCamel(data));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/relievers/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('relievers')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    if (error) throw error;
+    res.json(toCamel(data));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/relievers', async (req, res) => {
+  try {
+    const dbPayload = toSnake(req.body);
+    if (!dbPayload.id) dbPayload.id = crypto.randomUUID();
+    dbPayload.created_at = new Date().toISOString();
+
+    const { data, error } = await supabase.from('relievers').insert([dbPayload]).select();
+    if (error) throw error;
+    res.status(201).json(toCamel(data[0]));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/relievers/:id', async (req, res) => {
+  try {
+    const dbPayload = toSnake(req.body);
+    const { data, error } = await supabase
+      .from('relievers')
+      .update(dbPayload)
+      .eq('id', req.params.id)
+      .select();
+    if (error) throw error;
+    res.json(toCamel(data[0]));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/relievers/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('relievers').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.status(204).end();
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 // ----------------------------------------------------
 // SALARY ADVANCES

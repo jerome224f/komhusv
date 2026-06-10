@@ -1,5 +1,6 @@
 import express from 'express';
 import { createClient } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
 
 const app = express();
 app.use(express.json());
@@ -76,7 +77,9 @@ app.get('/api/dashboard/stats', async (req, res) => {
       { data: activeEmps, error: activeEmpsError },
       { data: activeOrgs, error: activeOrgsError },
       { data: payrollsThisMonth, error: prError },
-      { data: allAttendance, error: allAttError }
+      { data: allAttendance, error: allAttError },
+      { data: relieversList, error: relListError },
+      { count: relCount, error: relCountError }
     ] = await Promise.all([
       supabase.from('organizations').select('id', { count: 'exact', head: true }).eq('status', 'Active'),
       supabase.from('employees').select('id', { count: 'exact', head: true }).eq('status', 'Active'),
@@ -84,7 +87,9 @@ app.get('/api/dashboard/stats', async (req, res) => {
       supabase.from('employees').select('*').eq('status', 'Active'),
       supabase.from('organizations').select('*').eq('status', 'Active'),
       supabase.from('payrolls').select('net_salary').eq('month', currentMonth),
-      supabase.from('attendance_records').select('*')
+      supabase.from('attendance_records').select('*'),
+      supabase.from('relievers').select('*'),
+      supabase.from('relievers').select('id', { count: 'exact', head: true })
     ]);
 
     if (orgError) throw orgError;
@@ -94,12 +99,15 @@ app.get('/api/dashboard/stats', async (req, res) => {
     if (activeOrgsError) throw activeOrgsError;
     if (prError) throw prError;
     if (allAttError) throw allAttError;
+    if (relListError) throw relListError;
+    if (relCountError) throw relCountError;
 
-    let presentToday = 0, absentToday = 0, leaveToday = 0;
+    let presentToday = 0, absentToday = 0, leaveToday = 0, relieversToday = 0;
     const absentEmployeesToday: any[] = [];
     const attTodayList = attendanceToday || [];
     const empList = activeEmps || [];
     const orgList = activeOrgs || [];
+    const relList = relieversList || [];
 
     attTodayList.forEach((att: any) => {
       if (att.status === 'Present' || att.status === 'Half Day') presentToday++;
@@ -109,7 +117,18 @@ app.get('/api/dashboard/stats', async (req, res) => {
         const emp = empList.find((e: any) => e.id === att.employee_id);
         if (emp) {
           const org = orgList.find((o: any) => o.id === emp.organization_id);
-          if (org) absentEmployeesToday.push({ employee: toCamel(emp), org: toCamel(org) });
+          if (org) {
+            let relieverInfo: any = null;
+            if (att.reliever_id) {
+              const rel = relList.find((r: any) => r.id === att.reliever_id);
+              if (rel) relieverInfo = { name: rel.name, type: 'External', mobileNumber: rel.mobile_number };
+            } else if (att.reliever_employee_id) {
+              const relEmp = empList.find((e: any) => e.id === att.reliever_employee_id);
+              if (relEmp) relieverInfo = { name: relEmp.name, type: 'Internal', mobileNumber: relEmp.mobile_number };
+            }
+            if (relieverInfo) relieversToday++;
+            absentEmployeesToday.push({ employee: toCamel(emp), org: toCamel(org), reliever: relieverInfo });
+          }
         }
       }
     });
@@ -141,7 +160,18 @@ app.get('/api/dashboard/stats', async (req, res) => {
       }
     }
 
-    res.json({ totalOrganizations: orgsCount || 0, totalEmployees: empsCount || 0, presentToday, absentToday, leaveToday, payrollCost, absentEmployeesToday, heatmapData });
+    res.json({
+      totalOrganizations: orgsCount || 0,
+      totalEmployees: empsCount || 0,
+      presentToday,
+      absentToday,
+      leaveToday,
+      payrollCost,
+      absentEmployeesToday,
+      heatmapData,
+      totalRelievers: relCount || 0,
+      relieversToday
+    });
   } catch (error: any) {
     console.error('Dashboard error:', error);
     res.status(500).json({ error: error.message });
@@ -170,7 +200,7 @@ app.get('/api/organizations/:id', async (req, res) => {
 app.post('/api/organizations', async (req, res) => {
   try {
     const dbPayload = toSnake(req.body);
-    if (!dbPayload.id) dbPayload.id = crypto.randomUUID();
+    if (!dbPayload.id) dbPayload.id = randomUUID();
     dbPayload.created_at = new Date().toISOString();
     const { data, error } = await supabase.from('organizations').insert([dbPayload]).select();
     if (error) throw error;
@@ -209,7 +239,7 @@ app.get('/api/departments', async (req, res) => {
 app.post('/api/departments', async (req, res) => {
   try {
     const dbPayload = toSnake(req.body);
-    if (!dbPayload.id) dbPayload.id = crypto.randomUUID();
+    if (!dbPayload.id) dbPayload.id = randomUUID();
     const { data, error } = await supabase.from('departments').insert([dbPayload]).select();
     if (error) throw error;
     res.status(201).json(toCamel(data[0]));
@@ -255,7 +285,7 @@ app.get('/api/employees/:id', async (req, res) => {
 app.post('/api/employees', async (req, res) => {
   try {
     const dbPayload = toSnake(req.body);
-    if (!dbPayload.id) dbPayload.id = crypto.randomUUID();
+    if (!dbPayload.id) dbPayload.id = randomUUID();
     const { data, error } = await supabase.from('employees').insert([dbPayload]).select();
     if (error) throw error;
     res.status(201).json(toCamel(data[0]));
@@ -284,23 +314,55 @@ app.delete('/api/employees/:id', async (req, res) => {
 // ----------------------------------------------------
 app.get('/api/attendance', async (req, res) => {
   try {
-    const { date, employeeId } = req.query;
+    const { date, employeeId, month } = req.query;
     let query = supabase.from('attendance_records').select('*');
     if (date) {
       const dateStr = date as string;
-      // If month format YYYY-MM, use range query; if full date YYYY-MM-DD, use exact match
       if (/^\d{4}-\d{2}$/.test(dateStr)) {
-        const [year, month] = dateStr.split('-').map(Number);
+        const [year, mon] = dateStr.split('-').map(Number);
         const from = `${dateStr}-01`;
-        const nextMonth = new Date(year, month, 1);
+        const nextMonth = new Date(year, mon, 1);
         const to = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
         query = query.gte('date', from).lt('date', to);
       } else {
         query = query.eq('date', dateStr);
       }
     }
+    if (month) {
+      const monthStr = month as string;
+      const [year, mon] = monthStr.split('-').map(Number);
+      const from = `${monthStr}-01`;
+      const nextMonth = new Date(year, mon, 1);
+      const to = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+      query = query.gte('date', from).lt('date', to);
+    }
     if (employeeId) query = query.eq('employee_id', employeeId as string);
     const { data, error } = await query;
+    if (error) throw error;
+    res.json(toCamel(data));
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+// GET /api/attendance/relievers - attendance records that have a reliever assigned
+app.get('/api/attendance/relievers', async (req, res) => {
+  try {
+    const { date } = req.query;
+    let query = supabase
+      .from('attendance_records')
+      .select('*')
+      .or('reliever_employee_id.not.is.null,reliever_id.not.is.null');
+
+    if (date && (date as string).length === 7) {
+      const [year, mon] = (date as string).split('-').map(Number);
+      const from = `${date}-01`;
+      const nextMonth = new Date(year, mon, 1);
+      const to = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+      query = query.gte('date', from).lt('date', to);
+    } else if (date) {
+      query = query.eq('date', date as string);
+    }
+
+    const { data, error } = await query.order('date', { ascending: false });
     if (error) throw error;
     res.json(toCamel(data));
   } catch (error: any) { res.status(500).json({ error: error.message }); }
@@ -316,14 +378,23 @@ app.post('/api/attendance/upsert', async (req, res) => {
         .from('attendance_records').select('id')
         .eq('employee_id', record.employee_id).eq('date', record.date);
       if (checkError) throw checkError;
+
+      const updatePayload: any = {
+        status: record.status,
+        overtime_hours: record.overtime_hours,
+      };
+      if ('reliever_employee_id' in record) updatePayload.reliever_employee_id = record.reliever_employee_id;
+      if ('reliever_id' in record) updatePayload.reliever_id = record.reliever_id;
+
       if (existing && existing.length > 0) {
         const { error: updateError } = await supabase.from('attendance_records')
-          .update({ status: record.status, overtime_hours: record.overtime_hours })
+          .update(updatePayload)
           .eq('id', existing[0].id);
         if (updateError) throw updateError;
       } else {
-        if (!record.id) record.id = crypto.randomUUID();
-        const { error: insertError } = await supabase.from('attendance_records').insert([record]);
+        if (!record.id) record.id = randomUUID();
+        const insertPayload = { ...record, ...updatePayload };
+        const { error: insertError } = await supabase.from('attendance_records').insert([insertPayload]);
         if (insertError) throw insertError;
       }
     }
@@ -332,6 +403,56 @@ app.post('/api/attendance/upsert', async (req, res) => {
     console.error('Attendance upsert error:', error);
     res.status(500).json({ error: error.message });
   }
+});
+
+// ----------------------------------------------------
+// RELIEVERS
+// ----------------------------------------------------
+app.get('/api/relievers', async (req, res) => {
+  try {
+    const { orgId } = req.query;
+    let query = supabase.from('relievers').select('*').order('name');
+    if (orgId) query = query.eq('organization_id', orgId as string);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(toCamel(data));
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/api/relievers/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('relievers').select('*').eq('id', req.params.id).single();
+    if (error) throw error;
+    res.json(toCamel(data));
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/relievers', async (req, res) => {
+  try {
+    const dbPayload = toSnake(req.body);
+    if (!dbPayload.id) dbPayload.id = randomUUID();
+    dbPayload.created_at = new Date().toISOString();
+    const { data, error } = await supabase.from('relievers').insert([dbPayload]).select();
+    if (error) throw error;
+    res.status(201).json(toCamel(data[0]));
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+app.patch('/api/relievers/:id', async (req, res) => {
+  try {
+    const dbPayload = toSnake(req.body);
+    const { data, error } = await supabase.from('relievers').update(dbPayload).eq('id', req.params.id).select();
+    if (error) throw error;
+    res.json(toCamel(data[0]));
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+app.delete('/api/relievers/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('relievers').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.status(204).end();
+  } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 // ----------------------------------------------------
@@ -348,7 +469,7 @@ app.get('/api/advances', async (req, res) => {
 app.post('/api/advances', async (req, res) => {
   try {
     const dbPayload = toSnake(req.body);
-    if (!dbPayload.id) dbPayload.id = crypto.randomUUID();
+    if (!dbPayload.id) dbPayload.id = randomUUID();
     const { data, error } = await supabase.from('advances').insert([dbPayload]).select();
     if (error) throw error;
     res.status(201).json(toCamel(data[0]));
@@ -390,7 +511,7 @@ app.post('/api/payrolls', async (req, res) => {
       if (updateError) throw updateError;
       return res.json(toCamel(data[0]));
     } else {
-      if (!payroll.id) payroll.id = crypto.randomUUID();
+      if (!payroll.id) payroll.id = randomUUID();
       const { data, error: insertError } = await supabase.from('payrolls').insert([payroll]).select();
       if (insertError) throw insertError;
       return res.status(201).json(toCamel(data[0]));
@@ -415,7 +536,7 @@ app.get('/api/logs', async (req, res) => {
 app.post('/api/logs', async (req, res) => {
   try {
     const dbPayload = toSnake(req.body);
-    if (!dbPayload.id) dbPayload.id = crypto.randomUUID();
+    if (!dbPayload.id) dbPayload.id = randomUUID();
     if (!dbPayload.timestamp) dbPayload.timestamp = new Date().toISOString();
     const { data, error } = await supabase.from('activity_logs').insert([dbPayload]).select();
     if (error) throw error;
@@ -437,7 +558,7 @@ app.get('/api/notifications', async (req, res) => {
 app.post('/api/notifications', async (req, res) => {
   try {
     const dbPayload = toSnake(req.body);
-    if (!dbPayload.id) dbPayload.id = crypto.randomUUID();
+    if (!dbPayload.id) dbPayload.id = randomUUID();
     if (!dbPayload.timestamp) dbPayload.timestamp = new Date().toISOString();
     const { data, error } = await supabase.from('system_notifications').insert([dbPayload]).select();
     if (error) throw error;
@@ -467,7 +588,7 @@ app.post('/api/notifications/mark-all-read', async (req, res) => {
 // ----------------------------------------------------
 app.get('/api/settings/backup', async (req, res) => {
   try {
-    const [users, orgs, depts, emps, att, adv, payroll, logs, notifs] = await Promise.all([
+    const [users, orgs, depts, emps, att, adv, payroll, logs, notifs, relievers] = await Promise.all([
       supabase.from('users').select('*'),
       supabase.from('organizations').select('*'),
       supabase.from('departments').select('*'),
@@ -477,11 +598,13 @@ app.get('/api/settings/backup', async (req, res) => {
       supabase.from('payrolls').select('*'),
       supabase.from('activity_logs').select('*'),
       supabase.from('system_notifications').select('*'),
+      supabase.from('relievers').select('*'),
     ]);
     res.json(toCamel({
       users: users.data || [], organizations: orgs.data || [], departments: depts.data || [],
       employees: emps.data || [], attendance: att.data || [], advances: adv.data || [],
       payrolls: payroll.data || [], logs: logs.data || [], notifications: notifs.data || [],
+      relievers: relievers.data || [],
     }));
   } catch (error: any) {
     console.error('Backup error:', error);
@@ -500,11 +623,13 @@ app.post('/api/settings/restore', async (req, res) => {
     await supabase.from('organizations').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     await supabase.from('activity_logs').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     await supabase.from('system_notifications').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('relievers').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     await supabase.from('users').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     if (data.users?.length) await supabase.from('users').insert(data.users);
     if (data.organizations?.length) await supabase.from('organizations').insert(data.organizations);
     if (data.departments?.length) await supabase.from('departments').insert(data.departments);
     if (data.employees?.length) await supabase.from('employees').insert(data.employees);
+    if (data.relievers?.length) await supabase.from('relievers').insert(data.relievers);
     if (data.attendance?.length) await supabase.from('attendance_records').insert(data.attendance);
     if (data.advances?.length) await supabase.from('advances').insert(data.advances);
     if (data.payrolls?.length) await supabase.from('payrolls').insert(data.payrolls);

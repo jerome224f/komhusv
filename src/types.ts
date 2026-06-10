@@ -67,13 +67,26 @@ export interface Employee {
 
 export type AttendanceStatus = 'Present' | 'Absent' | 'Half Day' | 'Leave' | 'Holiday' | 'Week Off';
 
+export interface Reliever {
+  id: string;
+  name: string;
+  mobileNumber: string;
+  designation: string;
+  organizationId: string;
+  notes: string;
+  createdAt: string;
+}
+
 export interface AttendanceRecord {
   id: string;
   employeeId: string;
   date: string; // YYYY-MM-DD
   status: AttendanceStatus;
   overtimeHours: number;
+  relieverEmployeeId?: string | null;
+  relieverId?: string | null; // References the relievers table
 }
+
 
 export interface Advance {
   id: string;

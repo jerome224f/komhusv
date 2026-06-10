@@ -286,7 +286,19 @@ app.get('/api/attendance', async (req, res) => {
   try {
     const { date, employeeId } = req.query;
     let query = supabase.from('attendance_records').select('*');
-    if (date) query = query.eq('date', date as string);
+    if (date) {
+      const dateStr = date as string;
+      // If month format YYYY-MM, use range query; if full date YYYY-MM-DD, use exact match
+      if (/^\d{4}-\d{2}$/.test(dateStr)) {
+        const [year, month] = dateStr.split('-').map(Number);
+        const from = `${dateStr}-01`;
+        const nextMonth = new Date(year, month, 1);
+        const to = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+        query = query.gte('date', from).lt('date', to);
+      } else {
+        query = query.eq('date', dateStr);
+      }
+    }
     if (employeeId) query = query.eq('employee_id', employeeId as string);
     const { data, error } = await query;
     if (error) throw error;

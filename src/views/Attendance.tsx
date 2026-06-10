@@ -3,15 +3,14 @@ import { api } from '../lib/api';
 import { Organization, Employee, AttendanceStatus, AttendanceRecord } from '../types';
 import { 
   Search, Save, Calendar as CalendarIcon, Check, Loader2, Download, 
-  ChevronLeft, ChevronRight, User, Grid, FileSpreadsheet, TrendingUp,
-  AlertCircle, Info, RefreshCw
+  User, Grid, Info, RefreshCw, Users, X, AlertTriangle
 } from 'lucide-react';
 import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
 
 export function Attendance() {
   // Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'daily' | 'register' | 'individual'>('daily');
+  const [activeTab, setActiveTab] = useState<'daily' | 'register' | 'individual' | 'relievers'>('daily');
 
   // Shared Data
   const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -27,7 +26,7 @@ export function Attendance() {
   // ---------------------------------------------------------------------------
   const [dailyDate, setDailyDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [dailyEmployees, setDailyEmployees] = useState<Employee[]>([]);
-  const [dailyAttendance, setDailyAttendance] = useState<Record<string, { status: AttendanceStatus, otHours: number }>>({});
+  const [dailyAttendance, setDailyAttendance] = useState<Record<string, { status: AttendanceStatus; otHours: number; relieverId: string }>>({});
   const [dailySearch, setDailySearch] = useState('');
   const [dailySelectedEmpIds, setDailySelectedEmpIds] = useState<Set<string>>(new Set());
   const [isLoadingDaily, setIsLoadingDaily] = useState(false);
@@ -45,6 +44,7 @@ export function Attendance() {
   const [editingCell, setEditingCell] = useState<{ employeeId: string; date: string; employeeName: string } | null>(null);
   const [editCellStatus, setEditCellStatus] = useState<AttendanceStatus>('Present');
   const [editCellOT, setEditCellOT] = useState<number>(0);
+  const [editCellReliever, setEditCellReliever] = useState<string>('');
   const [isSavingCell, setIsSavingCell] = useState(false);
 
   // ---------------------------------------------------------------------------
@@ -58,7 +58,16 @@ export function Attendance() {
   const [editingDay, setEditingDay] = useState<{ date: string } | null>(null);
   const [editDayStatus, setEditDayStatus] = useState<AttendanceStatus>('Present');
   const [editDayOT, setEditDayOT] = useState<number>(0);
+  const [editDayReliever, setEditDayReliever] = useState<string>('');
   const [isSavingDay, setIsSavingDay] = useState(false);
+
+  // ---------------------------------------------------------------------------
+  // TAB 4: RELIEVERS LIST STATES
+  // ---------------------------------------------------------------------------
+  const [relieversMonth, setRelieversMonth] = useState(format(new Date(), 'yyyy-MM'));
+  const [relieversOrgId, setRelieversOrgId] = useState('');
+  const [relieverRecords, setRelieverRecords] = useState<AttendanceRecord[]>([]);
+  const [isLoadingRelievers, setIsLoadingRelievers] = useState(false);
 
   // Status mapping colors & labels
   const statusOptions: AttendanceStatus[] = ['Present', 'Absent', 'Half Day', 'Leave', 'Holiday', 'Week Off'];
@@ -70,15 +79,6 @@ export function Attendance() {
     'Leave': 'bg-orange-100 text-orange-700 hover:bg-orange-200 border-orange-200',
     'Holiday': 'bg-purple-100 text-purple-700 hover:bg-purple-200 border-purple-200',
     'Week Off': 'bg-gray-100 text-gray-700 hover:bg-gray-200 border-gray-200',
-  };
-
-  const statusBadgeColors: Record<AttendanceStatus, string> = {
-    'Present': 'bg-emerald-500 text-white',
-    'Absent': 'bg-rose-500 text-white',
-    'Half Day': 'bg-amber-500 text-white',
-    'Leave': 'bg-orange-500 text-white',
-    'Holiday': 'bg-indigo-500 text-white',
-    'Week Off': 'bg-slate-400 text-white',
   };
 
   const statusAbbr: Record<AttendanceStatus, string> = {
@@ -97,7 +97,7 @@ export function Attendance() {
     loadOrganizationsAndEmployees();
   }, []);
 
-  const loadOrganizationsAndEmployees = async () => {
+  async function loadOrganizationsAndEmployees() {
     setIsLoadingOrgs(true);
     try {
       const [orgs, emps] = await Promise.all([
@@ -110,6 +110,7 @@ export function Attendance() {
 
       if (activeOrgs.length > 0) {
         setSelectedOrgId(activeOrgs[0].id);
+        setRelieversOrgId(activeOrgs[0].id);
       }
     } catch (error) {
       console.error('Failed to load initial orgs/employees:', error);
@@ -127,7 +128,7 @@ export function Attendance() {
     }
   }, [selectedOrgId, dailyDate, activeTab]);
 
-  const loadDailyAttendance = async () => {
+  async function loadDailyAttendance() {
     setIsLoadingDaily(true);
     try {
       const [allEmps, dateRecords] = await Promise.all([
@@ -138,13 +139,17 @@ export function Attendance() {
       const empsInOrg = allEmps.filter(e => e.organizationId === selectedOrgId && e.status === 'Active');
       setDailyEmployees(empsInOrg);
       
-      const newMap: Record<string, { status: AttendanceStatus, otHours: number }> = {};
+      const newMap: Record<string, { status: AttendanceStatus; otHours: number; relieverId: string }> = {};
       empsInOrg.forEach(emp => {
         const record = dateRecords.find(r => r.employeeId === emp.id);
         if (record) {
-          newMap[emp.id] = { status: record.status as AttendanceStatus, otHours: record.overtimeHours };
+          newMap[emp.id] = {
+            status: record.status as AttendanceStatus,
+            otHours: record.overtimeHours,
+            relieverId: record.relieverEmployeeId || ''
+          };
         } else {
-          newMap[emp.id] = { status: 'Present', otHours: 0 };
+          newMap[emp.id] = { status: 'Present', otHours: 0, relieverId: '' };
         }
       });
       setDailyAttendance(newMap);
@@ -157,17 +162,33 @@ export function Attendance() {
   };
 
   const handleDailyStatus = (empId: string, status: AttendanceStatus) => {
-    setDailyAttendance(prev => ({
-      ...prev,
-      [empId]: { ...prev[empId], status }
-    }));
+    setDailyAttendance(prev => {
+      const current = prev[empId] || { status: 'Present', otHours: 0, relieverId: '' };
+      return {
+        ...prev,
+        [empId]: { ...current, status, relieverId: status !== 'Absent' ? '' : current.relieverId }
+      };
+    });
   };
 
   const handleDailyOT = (empId: string, otHours: number) => {
-    setDailyAttendance(prev => ({
-      ...prev,
-      [empId]: { ...prev[empId], otHours }
-    }));
+    setDailyAttendance(prev => {
+      const current = prev[empId] || { status: 'Present', otHours: 0, relieverId: '' };
+      return {
+        ...prev,
+        [empId]: { ...current, otHours }
+      };
+    });
+  };
+
+  const handleDailyReliever = (empId: string, relieverId: string) => {
+    setDailyAttendance(prev => {
+      const current = prev[empId] || { status: 'Present', otHours: 0, relieverId: '' };
+      return {
+        ...prev,
+        [empId]: { ...current, relieverId }
+      };
+    });
   };
 
   const handleSelectDailyRow = (empId: string) => {
@@ -196,7 +217,8 @@ export function Attendance() {
     const newMap = { ...dailyAttendance };
     if (dailySelectedEmpIds.size > 0) {
       dailySelectedEmpIds.forEach(empId => {
-        newMap[empId] = { ...newMap[empId], status };
+        const current = newMap[empId] || { status: 'Present', otHours: 0, relieverId: '' };
+        newMap[empId] = { ...current, status, relieverId: status !== 'Absent' ? '' : current.relieverId };
       });
       setDailyAttendance(newMap);
       setDailySelectedEmpIds(new Set());
@@ -206,7 +228,8 @@ export function Attendance() {
         emp.mobileNumber.includes(dailySearch)
       );
       filtered.forEach(emp => {
-        newMap[emp.id] = { ...newMap[emp.id], status };
+        const current = newMap[emp.id] || { status: 'Present', otHours: 0, relieverId: '' };
+        newMap[emp.id] = { ...current, status, relieverId: status !== 'Absent' ? '' : current.relieverId };
       });
       setDailyAttendance(newMap);
     }
@@ -217,12 +240,13 @@ export function Attendance() {
     setIsSyncing(true);
     try {
       const recordsToSave = dailyEmployees.map(emp => {
-        const stateData = dailyAttendance[emp.id];
+        const stateData = dailyAttendance[emp.id] || { status: 'Present', otHours: 0, relieverId: '' };
         return {
           employeeId: emp.id,
           date: dailyDate,
           status: stateData.status,
-          overtimeHours: stateData.otHours
+          overtimeHours: stateData.otHours,
+          relieverEmployeeId: stateData.status === 'Absent' && stateData.relieverId ? stateData.relieverId : null
         };
       });
 
@@ -246,7 +270,7 @@ export function Attendance() {
     }
   }, [selectedOrgId, registerMonth, activeTab]);
 
-  const loadMonthlyRegister = async () => {
+  async function loadMonthlyRegister() {
     setIsLoadingRegister(true);
     try {
       const [allEmps, monthRecords] = await Promise.all([
@@ -325,7 +349,8 @@ export function Attendance() {
         employeeId: empId,
         date: dayStr,
         status: nextStatus,
-        overtimeHours: existingOt
+        overtimeHours: existingOt,
+        relieverEmployeeId: null
       }];
       await api.attendance.upsertMultiple(payload);
 
@@ -336,7 +361,8 @@ export function Attendance() {
           employeeId: empId,
           date: dayStr,
           status: nextStatus,
-          overtimeHours: existingOt
+          overtimeHours: existingOt,
+          relieverEmployeeId: null
         };
         if (index > -1) {
           const next = [...prev];
@@ -359,6 +385,7 @@ export function Attendance() {
     setEditingCell({ employeeId, date, employeeName });
     setEditCellStatus(existing ? (existing.status as AttendanceStatus) : 'Present');
     setEditCellOT(existing ? existing.overtimeHours : 0);
+    setEditCellReliever(existing?.relieverEmployeeId || '');
   };
 
   const handleSaveCell = async () => {
@@ -370,7 +397,8 @@ export function Attendance() {
         employeeId: editingCell.employeeId,
         date: editingCell.date,
         status: editCellStatus,
-        overtimeHours: editCellOT
+        overtimeHours: editCellOT,
+        relieverEmployeeId: editCellStatus === 'Absent' && editCellReliever ? editCellReliever : null
       }];
       await api.attendance.upsertMultiple(payload);
 
@@ -382,7 +410,8 @@ export function Attendance() {
           employeeId: editingCell.employeeId,
           date: editingCell.date,
           status: editCellStatus,
-          overtimeHours: editCellOT
+          overtimeHours: editCellOT,
+          relieverEmployeeId: editCellStatus === 'Absent' && editCellReliever ? editCellReliever : null
         };
         if (index > -1) {
           const next = [...prev];
@@ -474,7 +503,7 @@ export function Attendance() {
     }
   }, [individualEmpId, individualMonth, activeTab]);
 
-  const loadIndividualAttendance = async () => {
+  async function loadIndividualAttendance() {
     setIsLoadingIndividual(true);
     try {
       const records = await api.attendance.getByEmployeeAndMonth(individualEmpId, individualMonth);
@@ -550,7 +579,8 @@ export function Attendance() {
         employeeId: individualEmpId,
         date: dayStr,
         status: nextStatus,
-        overtimeHours: existingOt
+        overtimeHours: existingOt,
+        relieverEmployeeId: null
       }];
       await api.attendance.upsertMultiple(payload);
 
@@ -561,7 +591,8 @@ export function Attendance() {
           employeeId: individualEmpId,
           date: dayStr,
           status: nextStatus,
-          overtimeHours: existingOt
+          overtimeHours: existingOt,
+          relieverEmployeeId: null
         };
         if (index > -1) {
           const next = [...prev];
@@ -584,6 +615,7 @@ export function Attendance() {
     setEditingDay({ date });
     setEditDayStatus(existing ? (existing.status as AttendanceStatus) : 'Present');
     setEditDayOT(existing ? existing.overtimeHours : 0);
+    setEditDayReliever(existing?.relieverEmployeeId || '');
   };
 
   const handleSaveDay = async () => {
@@ -595,7 +627,8 @@ export function Attendance() {
         employeeId: individualEmpId,
         date: editingDay.date,
         status: editDayStatus,
-        overtimeHours: editDayOT
+        overtimeHours: editDayOT,
+        relieverEmployeeId: editDayStatus === 'Absent' && editDayReliever ? editDayReliever : null
       }];
       await api.attendance.upsertMultiple(payload);
 
@@ -607,7 +640,8 @@ export function Attendance() {
           employeeId: individualEmpId,
           date: editingDay.date,
           status: editDayStatus,
-          overtimeHours: editDayOT
+          overtimeHours: editDayOT,
+          relieverEmployeeId: editDayStatus === 'Absent' && editDayReliever ? editDayReliever : null
         };
         if (index > -1) {
           const next = [...prev];
@@ -635,12 +669,14 @@ export function Attendance() {
     const data = individualDays.map((dayStr, index) => {
       const rec = individualRecords.find(r => r.date === dayStr);
       const parsedDate = new Date(dayStr + 'T00:00:00');
+      const reliever = rec?.relieverEmployeeId ? allEmployees.find(e => e.id === rec.relieverEmployeeId) : null;
       return {
         'S.No': index + 1,
         'Date': dayStr,
         'Day': format(parsedDate, 'EEEE'),
         'Attendance Status': rec ? rec.status : 'Not Marked',
-        'Overtime Hours': rec ? rec.overtimeHours : 0
+        'Overtime Hours': rec ? rec.overtimeHours : 0,
+        'Reliever': reliever ? reliever.name : '-'
       };
     });
 
@@ -665,10 +701,40 @@ export function Attendance() {
       { wch: 14 },
       { wch: 14 },
       { wch: 22 },
-      { wch: 16 }
+      { wch: 16 },
+      { wch: 20 }
     ];
 
     XLSX.writeFile(workbook, `${selectedEmployee.name.replace(/\s+/g, '_')}_Attendance_${individualMonth}.xlsx`);
+  };
+
+  // ---------------------------------------------------------------------------
+  // TAB 4: RELIEVERS LIST LOGIC
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (activeTab === 'relievers') {
+      loadRelieverRecords();
+    }
+  }, [activeTab, relieversMonth, relieversOrgId]);
+
+  async function loadRelieverRecords() {
+    setIsLoadingRelievers(true);
+    try {
+      const records = await api.attendance.getRelievers(relieversMonth);
+      // Filter by org if needed
+      if (relieversOrgId) {
+        const orgEmpIds = allEmployees
+          .filter(e => e.organizationId === relieversOrgId)
+          .map(e => e.id);
+        setRelieverRecords(records.filter(r => orgEmpIds.includes(r.employeeId)));
+      } else {
+        setRelieverRecords(records);
+      }
+    } catch (error) {
+      console.error('Failed to load reliver records:', error);
+    } finally {
+      setIsLoadingRelievers(false);
+    }
   };
 
   // Filters for lists
@@ -700,7 +766,7 @@ export function Attendance() {
         </div>
 
         {/* Beautiful tabs */}
-        <div className="flex bg-gray-100/80 p-1 rounded-xl border border-gray-200/50 self-start md:self-auto">
+        <div className="flex bg-gray-100/80 p-1 rounded-xl border border-gray-200/50 self-start md:self-auto flex-wrap gap-1">
           <button
             onClick={() => setActiveTab('daily')}
             className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg transition-all ${
@@ -734,6 +800,17 @@ export function Attendance() {
             <User className="w-4 h-4" />
             Individual Overview
           </button>
+          <button
+            onClick={() => setActiveTab('relievers')}
+            className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+              activeTab === 'relievers'
+                ? 'bg-white text-orange-600 shadow-sm'
+                : 'text-gray-600 hover:text-orange-600'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            Relievers
+          </button>
         </div>
       </div>
 
@@ -741,18 +818,18 @@ export function Attendance() {
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 shrink-0">
         <div className="flex flex-col md:flex-row gap-5 items-end">
           
-          {/* Org Filter (Needed for Tab 1 & Tab 2) */}
+          {/* Org Filter (Needed for Tab 1, 2 & 4) */}
           {activeTab !== 'individual' && (
             <div className="flex-1 w-full">
               <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Organization</label>
               <div className="relative">
                 <select 
-                  value={selectedOrgId} 
-                  onChange={e => setSelectedOrgId(e.target.value)}
+                  value={activeTab === 'relievers' ? relieversOrgId : selectedOrgId} 
+                  onChange={e => activeTab === 'relievers' ? setRelieversOrgId(e.target.value) : setSelectedOrgId(e.target.value)}
                   disabled={isLoadingOrgs}
                   className="w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white font-semibold text-gray-700 disabled:opacity-70 appearance-none transition-all"
                 >
-                  <option value="">Select Organization</option>
+                  <option value="">All Organizations</option>
                   {organizations.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                 </select>
                 {isLoadingOrgs && <Loader2 className="absolute right-8 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-gray-400" />}
@@ -785,6 +862,22 @@ export function Attendance() {
                   type="month"
                   value={registerMonth}
                   onChange={e => setRegisterMonth(e.target.value)}
+                  className="w-full pl-10 pr-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white font-semibold text-gray-700 transition-all"
+                />
+                <CalendarIcon className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              </div>
+            </div>
+          )}
+
+          {/* Month Filter for Relievers */}
+          {activeTab === 'relievers' && (
+            <div className="w-full md:w-56">
+              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Month</label>
+              <div className="relative">
+                <input 
+                  type="month"
+                  value={relieversMonth}
+                  onChange={e => setRelieversMonth(e.target.value)}
                   className="w-full pl-10 pr-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white font-semibold text-gray-700 transition-all"
                 />
                 <CalendarIcon className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -863,7 +956,7 @@ export function Attendance() {
             )}
           </div>
 
-          <div className="overflow-x-auto flex-1 relative max-h-[500px]">
+          <div className="overflow-x-auto flex-1 relative max-h-[600px]">
             {isLoadingDaily && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500 bg-white/80 z-20">
                 <Loader2 className="w-8 h-8 animate-spin mb-2 text-blue-500" />
@@ -884,13 +977,14 @@ export function Attendance() {
                   </th>
                   <th className="p-4 font-black">Employee</th>
                   <th className="p-4 font-black text-center min-w-[320px]">Attendance Status</th>
-                  <th className="p-4 font-black w-32">OT Hours</th>
+                  <th className="p-4 font-black w-28">OT Hours</th>
+                  <th className="p-4 font-black min-w-[160px]">Reliever (if Absent)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filteredDailyEmployees.length === 0 && !isLoadingDaily ? (
                   <tr>
-                    <td colSpan={4} className="p-10 text-center text-gray-400 font-medium">
+                    <td colSpan={5} className="p-10 text-center text-gray-400 font-medium">
                       {dailySearch ? 'No employees match your search.' : 'No active employees found in this organization.'}
                     </td>
                   </tr>
@@ -898,9 +992,11 @@ export function Attendance() {
                   filteredDailyEmployees.map(emp => {
                     const currentStatus = dailyAttendance[emp.id]?.status || 'Present';
                     const otHours = dailyAttendance[emp.id]?.otHours || 0;
+                    const relieverId = dailyAttendance[emp.id]?.relieverId || '';
+                    const isAbsent = currentStatus === 'Absent';
                     
                     return (
-                      <tr key={emp.id} className={`hover:bg-gray-50/40 transition-colors ${dailySelectedEmpIds.has(emp.id) ? 'bg-blue-50/20' : ''}`}>
+                      <tr key={emp.id} className={`hover:bg-gray-50/40 transition-colors ${dailySelectedEmpIds.has(emp.id) ? 'bg-blue-50/20' : ''} ${isAbsent ? 'bg-rose-50/30' : ''}`}>
                         <td className="p-4 text-center">
                           <input 
                             type="checkbox" 
@@ -951,6 +1047,25 @@ export function Attendance() {
                             className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white font-semibold text-center transition-shadow"
                           />
                         </td>
+                        <td className="p-4">
+                          {isAbsent ? (
+                            <select
+                              value={relieverId}
+                              onChange={e => handleDailyReliever(emp.id, e.target.value)}
+                              className="w-full px-2 py-1.5 text-xs border border-orange-200 bg-orange-50 rounded-lg focus:ring-2 focus:ring-orange-400 font-semibold text-gray-700 transition-all"
+                            >
+                              <option value="">— No Reliever —</option>
+                              {dailyEmployees
+                                .filter(e => e.id !== emp.id)
+                                .map(e => (
+                                  <option key={e.id} value={e.id}>{e.name}</option>
+                                ))
+                              }
+                            </select>
+                          ) : (
+                            <span className="text-xs text-gray-300 font-semibold">N/A</span>
+                          )}
+                        </td>
                       </tr>
                     );
                   })
@@ -959,7 +1074,15 @@ export function Attendance() {
             </table>
           </div>
 
-          <div className="p-4 border-t border-gray-100 bg-gray-50/70 flex justify-end shrink-0">
+          <div className="p-4 border-t border-gray-100 bg-gray-50/70 flex justify-between items-center shrink-0">
+            <div className="text-xs text-gray-400 font-semibold">
+              {filteredDailyEmployees.filter(e => dailyAttendance[e.id]?.status === 'Absent').length > 0 && (
+                <span className="flex items-center gap-1.5 text-orange-600">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {filteredDailyEmployees.filter(e => dailyAttendance[e.id]?.status === 'Absent').length} absent — assign relievers above
+                </span>
+              )}
+            </div>
              <button 
               onClick={handleSaveDaily}
               disabled={isSavingDaily || isLoadingDaily || dailyEmployees.length === 0}
@@ -1164,6 +1287,7 @@ export function Attendance() {
                           const record = registerRecords.find(r => r.employeeId === emp.id && r.date === dayStr);
                           const status = record ? (record.status as AttendanceStatus) : null;
                           const ot = record ? record.overtimeHours : 0;
+                          const hasReliever = !!(record?.relieverEmployeeId);
                           
                           let cellContent = '-';
                           let cellClass = 'bg-gray-50 text-gray-400 border border-gray-100 border-dashed hover:bg-gray-100';
@@ -1178,17 +1302,22 @@ export function Attendance() {
                             else if (status === 'Week Off') cellClass = 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200';
                           }
 
+                          const relieverEmp = hasReliever ? allEmployees.find(e => e.id === record?.relieverEmployeeId) : null;
+
                           return (
                             <td key={dayStr} className="p-1 text-center">
                               <button
                                 onClick={() => handleCellClick(emp.id, dayStr)}
                                 onDoubleClick={() => handleOpenEditCell(emp.id, dayStr, emp.name)}
-                                title={`${emp.name} on ${dayStr} (Double click for details)${ot > 0 ? ` (OT: ${ot}h)` : ''}`}
+                                title={`${emp.name} on ${dayStr}${hasReliever ? ` | Reliever: ${relieverEmp?.name || 'Assigned'}` : ''} (Double click for details)${ot > 0 ? ` (OT: ${ot}h)` : ''}`}
                                 className={`w-8 h-8 rounded-lg text-[10px] font-black flex items-center justify-center mx-auto transition-all cursor-pointer relative ${cellClass}`}
                               >
                                 {cellContent}
                                 {ot > 0 && (
                                   <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-blue-600 border border-white rounded-full" title={`OT: ${ot} hours`} />
+                                )}
+                                {hasReliever && (
+                                  <span className="absolute -top-0.5 -left-0.5 w-2.5 h-2.5 bg-orange-500 border border-white rounded-full" title={`Reliever: ${relieverEmp?.name}`} />
                                 )}
                               </button>
                             </td>
@@ -1210,7 +1339,8 @@ export function Attendance() {
               <span className="flex items-center gap-1"><span className="w-5 h-5 bg-orange-100 border border-orange-200 text-orange-800 font-bold text-[9px] rounded flex items-center justify-center">L</span> Leave</span>
               <span className="flex items-center gap-1"><span className="w-5 h-5 bg-indigo-100 border border-indigo-200 text-indigo-800 font-bold text-[9px] rounded flex items-center justify-center">H</span> Holiday</span>
               <span className="flex items-center gap-1"><span className="w-5 h-5 bg-slate-100 border border-slate-200 text-slate-700 font-bold text-[9px] rounded flex items-center justify-center">WO</span> Week Off</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-blue-600 rounded-full"></span> Overtime hours logged</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-blue-600 rounded-full"></span> OT logged</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-orange-500 rounded-full"></span> Reliever assigned</span>
               <span className="ml-auto text-[10px] text-blue-600">💡 Single click to toggle Present/Absent. Double click for detailed edit.</span>
             </div>
           </div>
@@ -1228,7 +1358,7 @@ export function Attendance() {
                     onClick={() => setEditingCell(null)}
                     className="text-gray-400 hover:text-gray-600 text-lg font-bold p-1 leading-none rounded-lg hover:bg-gray-50"
                   >
-                    ×
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
 
@@ -1267,6 +1397,25 @@ export function Attendance() {
                       className="w-full px-3 py-2 border border-gray-200 rounded-xl bg-white font-semibold focus:ring-2 focus:ring-blue-500/30 text-center"
                     />
                   </div>
+
+                  {editCellStatus === 'Absent' && (
+                    <div>
+                      <label className="block text-[10px] font-bold text-orange-500 uppercase mb-1.5">Assign Reliever</label>
+                      <select
+                        value={editCellReliever}
+                        onChange={e => setEditCellReliever(e.target.value)}
+                        className="w-full px-3 py-2 border border-orange-200 bg-orange-50 rounded-xl font-semibold focus:ring-2 focus:ring-orange-400/30 text-gray-700 text-sm"
+                      >
+                        <option value="">— No Reliever —</option>
+                        {allEmployees
+                          .filter(e => e.id !== editingCell.employeeId)
+                          .map(e => (
+                            <option key={e.id} value={e.id}>{e.name} ({e.designation || 'Staff'})</option>
+                          ))
+                        }
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-2 pt-2">
@@ -1542,6 +1691,7 @@ export function Attendance() {
                         const record = individualRecords.find(r => r.date === dayStr);
                         const status = record ? (record.status as AttendanceStatus) : null;
                         const ot = record ? record.overtimeHours : 0;
+                        const hasReliever = !!(record?.relieverEmployeeId);
                         
                         let badgeClass = 'bg-gray-50 text-gray-400 border border-gray-100 border-dashed hover:bg-gray-100';
                         if (status) {
@@ -1558,7 +1708,7 @@ export function Attendance() {
                             key={dayStr}
                             onClick={() => handleDayClick(dayStr)}
                             onDoubleClick={() => handleOpenEditDay(dayStr)}
-                            title={`Day ${dayNum} (Double click for details)`}
+                            title={`Day ${dayNum} (Double click for details)${hasReliever ? ' | Has Reliever' : ''}`}
                             className={`aspect-square p-1.5 flex flex-col justify-between items-start border rounded-xl transition-all cursor-pointer relative ${badgeClass}`}
                           >
                             <span className="text-[11px] font-bold leading-none">{dayNum}</span>
@@ -1570,6 +1720,9 @@ export function Attendance() {
                             {ot > 0 && (
                               <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-blue-600 rounded-full" />
                             )}
+                            {hasReliever && (
+                              <span className="absolute bottom-1 right-1 w-1.5 h-1.5 bg-orange-500 rounded-full" />
+                            )}
                           </button>
                         );
                       })}
@@ -1578,9 +1731,10 @@ export function Attendance() {
                 )}
               </div>
 
-              <div className="mt-4 text-[10px] font-semibold text-gray-400 flex items-center gap-1.5 pt-4 border-t border-gray-50">
+              <div className="mt-4 text-[10px] font-semibold text-gray-400 flex items-center gap-1.5 pt-4 border-t border-gray-50 flex-wrap gap-y-1">
                 <Info className="w-4 h-4 text-blue-500 shrink-0" />
-                <span>💡 Single click to toggle Present/Absent. Double click for detailed edit.</span>
+                <span>Single click to toggle Present/Absent. Double click for detailed edit.</span>
+                <span className="flex items-center gap-1 ml-2"><span className="w-1.5 h-1.5 bg-orange-500 rounded-full inline-block" /> Reliever assigned</span>
               </div>
             </div>
 
@@ -1597,9 +1751,9 @@ export function Attendance() {
                   </div>
                   <button 
                     onClick={() => setEditingDay(null)}
-                    className="text-gray-400 hover:text-gray-600 text-lg font-bold p-1 leading-none rounded-lg hover:bg-gray-50"
+                    className="text-gray-400 hover:text-gray-600 p-1 leading-none rounded-lg hover:bg-gray-50"
                   >
-                    ×
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
 
@@ -1638,6 +1792,25 @@ export function Attendance() {
                       className="w-full px-3 py-2 border border-gray-200 rounded-xl bg-white font-semibold focus:ring-2 focus:ring-blue-500/30 text-center"
                     />
                   </div>
+
+                  {editDayStatus === 'Absent' && (
+                    <div>
+                      <label className="block text-[10px] font-bold text-orange-500 uppercase mb-1.5">Assign Reliever</label>
+                      <select
+                        value={editDayReliever}
+                        onChange={e => setEditDayReliever(e.target.value)}
+                        className="w-full px-3 py-2 border border-orange-200 bg-orange-50 rounded-xl font-semibold focus:ring-2 focus:ring-orange-400/30 text-gray-700 text-sm"
+                      >
+                        <option value="">— No Reliever —</option>
+                        {allEmployees
+                          .filter(e => e.id !== individualEmpId)
+                          .map(e => (
+                            <option key={e.id} value={e.id}>{e.name} ({e.designation || 'Staff'})</option>
+                          ))
+                        }
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-2 pt-2">
@@ -1660,6 +1833,115 @@ export function Attendance() {
             </div>
           )}
 
+        </div>
+      )}
+
+      {/* -----------------------------------------------------------------------
+          TAB 4: RELIEVERS LIST CONTENT
+          ----------------------------------------------------------------------- */}
+      {activeTab === 'relievers' && (
+        <div className="space-y-6">
+
+          {/* Header summary card */}
+          <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-base font-black text-gray-900 flex items-center gap-2">
+                <Users className="w-5 h-5 text-orange-500" />
+                Reliever Assignments
+              </h2>
+              <span className="text-xs font-bold px-3 py-1 bg-orange-50 text-orange-600 border border-orange-100 rounded-full">
+                {relieverRecords.length} Record{relieverRecords.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <p className="text-xs text-gray-400 font-semibold">
+              Showing all absent employees with assigned relievers for {format(new Date(relieversMonth + '-01T00:00:00'), 'MMMM yyyy')}.
+            </p>
+          </div>
+
+          {/* Reliever Table */}
+          <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+            {isLoadingRelievers ? (
+              <div className="flex flex-col items-center justify-center p-16 text-gray-400">
+                <Loader2 className="w-8 h-8 animate-spin mb-2 text-orange-500" />
+                <p className="font-semibold text-sm">Loading reliever records...</p>
+              </div>
+            ) : relieverRecords.length === 0 ? (
+              <div className="flex flex-col items-center justify-center p-16 text-gray-400">
+                <Users className="w-12 h-12 mb-3 opacity-20" />
+                <p className="font-bold text-sm">No Reliever Records Found</p>
+                <p className="text-xs mt-1">No absent employees have been assigned a reliever for this month.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-sm">
+                  <thead className="bg-gray-50/80 border-b border-gray-200">
+                    <tr className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                      <th className="p-4 font-black">#</th>
+                      <th className="p-4 font-black">Date</th>
+                      <th className="p-4 font-black">Absent Employee</th>
+                      <th className="p-4 font-black">Dept / Designation</th>
+                      <th className="p-4 font-black">Reliever Assigned</th>
+                      <th className="p-4 font-black">Reliever Dept</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {relieverRecords.map((rec, index) => {
+                      const absentEmp = allEmployees.find(e => e.id === rec.employeeId);
+                      const relieverEmp = rec.relieverEmployeeId ? allEmployees.find(e => e.id === rec.relieverEmployeeId) : null;
+                      
+                      return (
+                        <tr key={rec.id || index} className="hover:bg-gray-50/40 transition-colors">
+                          <td className="p-4 text-xs text-gray-400 font-bold">{index + 1}</td>
+                          <td className="p-4">
+                            <div className="font-bold text-gray-700">
+                              {format(new Date(rec.date + 'T00:00:00'), 'dd MMM yyyy')}
+                            </div>
+                            <div className="text-[10px] text-gray-400 font-semibold">
+                              {format(new Date(rec.date + 'T00:00:00'), 'EEEE')}
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center text-xs font-black flex-shrink-0">
+                                {absentEmp ? absentEmp.name.split(' ').map(n => n[0]).join('').slice(0,2) : 'A'}
+                              </div>
+                              <div>
+                                <div className="font-bold text-gray-900 text-sm">{absentEmp?.name || 'Unknown Employee'}</div>
+                                <div className="text-[10px] text-gray-400 font-semibold">{absentEmp?.mobileNumber || ''}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <div className="text-xs font-semibold text-gray-700">{absentEmp?.designation || 'Staff'}</div>
+                            <div className="text-[10px] text-gray-400 font-semibold">{absentEmp?.department || 'N/A'}</div>
+                          </td>
+                          <td className="p-4">
+                            {relieverEmp ? (
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-700 flex items-center justify-center text-xs font-black flex-shrink-0">
+                                  {relieverEmp.name.split(' ').map(n => n[0]).join('').slice(0,2)}
+                                </div>
+                                <div>
+                                  <div className="font-bold text-gray-900 text-sm">{relieverEmp.name}</div>
+                                  <div className="text-[10px] text-gray-400 font-semibold">{relieverEmp.mobileNumber}</div>
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-300 font-semibold italic">Not Assigned</span>
+                            )}
+                          </td>
+                          <td className="p-4">
+                            <div className="text-xs font-semibold text-gray-700">{relieverEmp?.designation || '—'}</div>
+                            <div className="text-[10px] text-gray-400 font-semibold">{relieverEmp?.department || '—'}</div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

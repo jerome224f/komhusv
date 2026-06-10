@@ -153,6 +153,9 @@ export const api = {
     getByEmployee: async (employeeId: string): Promise<AttendanceRecord[]> => {
       return fetchAPI(`/api/attendance?employeeId=${employeeId}`);
     },
+    getByEmployeeAndMonth: async (employeeId: string, month: string): Promise<AttendanceRecord[]> => {
+      return fetchAPI(`/api/attendance?employeeId=${employeeId}&date=${month}`);
+    },
     upsertMultiple: async (records: Omit<AttendanceRecord, 'id'>[]): Promise<void> => {
       return fetchAPI('/api/attendance/upsert', {
         method: 'POST',
@@ -184,6 +187,12 @@ export const api = {
     upsert: async (data: Omit<Payroll, 'id'>): Promise<Payroll> => {
       return fetchAPI('/api/payrolls', {
         method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+    update: async (id: string, data: Partial<Payroll>): Promise<Payroll> => {
+      return fetchAPI(`/api/payrolls/${id}`, {
+        method: 'PATCH',
         body: JSON.stringify(data),
       });
     }

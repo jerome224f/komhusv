@@ -157,7 +157,9 @@ export function Attendance() {
         api.attendance.getByDateAndOrg(dailyDate, selectedOrgId)
       ]);
       
-      const empsInOrg = allEmps.filter(e => e.organizationId === selectedOrgId && e.status === 'Active');
+      const empsInOrg = selectedOrgId
+        ? allEmps.filter(e => e.organizationId === selectedOrgId && e.status === 'Active')
+        : allEmps.filter(e => e.status === 'Active');
       setDailyEmployees(empsInOrg);
       
       const newMap: Record<string, { status: AttendanceStatus; otHours: number; relieverId: string }> = {};
@@ -183,7 +185,7 @@ export function Attendance() {
   };
 
   useEffect(() => {
-    if (selectedOrgId && dailyDate && activeTab === 'daily') {
+    if (dailyDate && activeTab === 'daily') {
       loadDailyAttendance();
     }
   }, [selectedOrgId, dailyDate, activeTab]);
@@ -312,7 +314,9 @@ export function Attendance() {
         api.employees.getAll(),
         api.attendance.getByDateAndOrg(registerMonth, selectedOrgId)
       ]);
-      const orgEmps = allEmps.filter(e => e.organizationId === selectedOrgId && e.status === 'Active');
+      const orgEmps = selectedOrgId
+        ? allEmps.filter(e => e.organizationId === selectedOrgId && e.status === 'Active')
+        : allEmps.filter(e => e.status === 'Active');
       setRegisterEmployees(orgEmps);
       setRegisterRecords(monthRecords);
     } catch (error) {
@@ -323,7 +327,7 @@ export function Attendance() {
   };
 
   useEffect(() => {
-    if (selectedOrgId && registerMonth && activeTab === 'register') {
+    if (registerMonth && activeTab === 'register') {
       loadMonthlyRegister();
     }
   }, [selectedOrgId, registerMonth, activeTab]);

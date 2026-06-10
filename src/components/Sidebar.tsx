@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Users, Building2, Layers, CalendarCheck, FileSpreadsheet, Banknote, FileBarChart, History, Menu, X, LogOut, Settings as SettingsIcon } from 'lucide-react';
+import { LayoutDashboard, Users, Building2, Layers, CalendarCheck, FileSpreadsheet, Banknote, FileBarChart, History, Menu, X, LogOut, Settings as SettingsIcon, Database } from 'lucide-react';
 import logo from '../assets/logo.png';
 
 interface SidebarProps {
@@ -23,6 +23,7 @@ export function Sidebar({ currentView, setCurrentView, isOpen, setIsOpen, user, 
     { id: 'reports', label: 'Reports', icon: FileBarChart },
     { id: 'activity_log', label: 'Activity Log', icon: History },
     { id: 'settings', label: 'Settings', icon: SettingsIcon },
+    { id: 'migrate', label: '⬆ Migrate Old Data', icon: Database },
   ];
 
   const handleLogout = () => {

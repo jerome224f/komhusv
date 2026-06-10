@@ -12,6 +12,7 @@ import { Reports } from './views/Reports';
 import { Settings } from './views/Settings';
 import { ActivityLogView } from './views/ActivityLog';
 import { Login } from './views/Login';
+import { MigrateData } from './views/MigrateData';
 
 export default function App() {
   const [currentView, setCurrentView] = useState('dashboard');
@@ -43,6 +44,7 @@ export default function App() {
       case 'reports': return <Reports />;
       case 'activity_log': return <ActivityLogView />;
       case 'settings': return <Settings />;
+      case 'migrate': return <MigrateData />;
       default: return <Dashboard />;
     }
   };

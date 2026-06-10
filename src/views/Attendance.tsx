@@ -314,6 +314,45 @@ export function Attendance() {
   const dailyGraphData = getDailyAttendanceGraphData();
   const maxDailyPresent = Math.max(...dailyGraphData.map(d => d.count), 4);
 
+  const handleCellClick = async (empId: string, dayStr: string) => {
+    const existing = registerRecords.find(r => r.employeeId === empId && r.date === dayStr);
+    const nextStatus: AttendanceStatus = existing ? (existing.status === 'Present' ? 'Absent' : 'Present') : 'Present';
+    const existingOt = existing ? existing.overtimeHours : 0;
+
+    setIsSyncing(true);
+    try {
+      const payload = [{
+        employeeId: empId,
+        date: dayStr,
+        status: nextStatus,
+        overtimeHours: existingOt
+      }];
+      await api.attendance.upsertMultiple(payload);
+
+      setRegisterRecords(prev => {
+        const index = prev.findIndex(r => r.employeeId === empId && r.date === dayStr);
+        const updatedRecord = {
+          id: prev[index]?.id || '',
+          employeeId: empId,
+          date: dayStr,
+          status: nextStatus,
+          overtimeHours: existingOt
+        };
+        if (index > -1) {
+          const next = [...prev];
+          next[index] = updatedRecord;
+          return next;
+        } else {
+          return [...prev, updatedRecord];
+        }
+      });
+    } catch (error) {
+      console.error('Failed to quick-toggle status:', error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   // Edit single cell logic
   const handleOpenEditCell = (employeeId: string, date: string, employeeName: string) => {
     const existing = registerRecords.find(r => r.employeeId === employeeId && r.date === date);
@@ -499,6 +538,45 @@ export function Attendance() {
 
   const individualStats = getIndividualStats();
   const selectedEmployee = allEmployees.find(e => e.id === individualEmpId);
+
+  const handleDayClick = async (dayStr: string) => {
+    const existing = individualRecords.find(r => r.date === dayStr);
+    const nextStatus: AttendanceStatus = existing ? (existing.status === 'Present' ? 'Absent' : 'Present') : 'Present';
+    const existingOt = existing ? existing.overtimeHours : 0;
+
+    setIsSyncing(true);
+    try {
+      const payload = [{
+        employeeId: individualEmpId,
+        date: dayStr,
+        status: nextStatus,
+        overtimeHours: existingOt
+      }];
+      await api.attendance.upsertMultiple(payload);
+
+      setIndividualRecords(prev => {
+        const index = prev.findIndex(r => r.date === dayStr);
+        const updated = {
+          id: prev[index]?.id || '',
+          employeeId: individualEmpId,
+          date: dayStr,
+          status: nextStatus,
+          overtimeHours: existingOt
+        };
+        if (index > -1) {
+          const next = [...prev];
+          next[index] = updated;
+          return next;
+        } else {
+          return [...prev, updated];
+        }
+      });
+    } catch (error) {
+      console.error('Failed to quick-toggle status:', error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // Edit individual calendar cell
   const handleOpenEditDay = (date: string) => {
@@ -1103,8 +1181,9 @@ export function Attendance() {
                           return (
                             <td key={dayStr} className="p-1 text-center">
                               <button
-                                onClick={() => handleOpenEditCell(emp.id, dayStr, emp.name)}
-                                title={`${emp.name} on ${dayStr}${ot > 0 ? ` (OT: ${ot}h)` : ''}`}
+                                onClick={() => handleCellClick(emp.id, dayStr)}
+                                onDoubleClick={() => handleOpenEditCell(emp.id, dayStr, emp.name)}
+                                title={`${emp.name} on ${dayStr} (Double click for details)${ot > 0 ? ` (OT: ${ot}h)` : ''}`}
                                 className={`w-8 h-8 rounded-lg text-[10px] font-black flex items-center justify-center mx-auto transition-all cursor-pointer relative ${cellClass}`}
                               >
                                 {cellContent}
@@ -1132,7 +1211,7 @@ export function Attendance() {
               <span className="flex items-center gap-1"><span className="w-5 h-5 bg-indigo-100 border border-indigo-200 text-indigo-800 font-bold text-[9px] rounded flex items-center justify-center">H</span> Holiday</span>
               <span className="flex items-center gap-1"><span className="w-5 h-5 bg-slate-100 border border-slate-200 text-slate-700 font-bold text-[9px] rounded flex items-center justify-center">WO</span> Week Off</span>
               <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-blue-600 rounded-full"></span> Overtime hours logged</span>
-              <span className="ml-auto text-[10px] text-blue-600">💡 Click any cell to update status & overtime instantly.</span>
+              <span className="ml-auto text-[10px] text-blue-600">💡 Single click to toggle Present/Absent. Double click for detailed edit.</span>
             </div>
           </div>
 
@@ -1477,7 +1556,9 @@ export function Attendance() {
                         return (
                           <button
                             key={dayStr}
-                            onClick={() => handleOpenEditDay(dayStr)}
+                            onClick={() => handleDayClick(dayStr)}
+                            onDoubleClick={() => handleOpenEditDay(dayStr)}
+                            title={`Day ${dayNum} (Double click for details)`}
                             className={`aspect-square p-1.5 flex flex-col justify-between items-start border rounded-xl transition-all cursor-pointer relative ${badgeClass}`}
                           >
                             <span className="text-[11px] font-bold leading-none">{dayNum}</span>
@@ -1499,7 +1580,7 @@ export function Attendance() {
 
               <div className="mt-4 text-[10px] font-semibold text-gray-400 flex items-center gap-1.5 pt-4 border-t border-gray-50">
                 <Info className="w-4 h-4 text-blue-500 shrink-0" />
-                <span>Click any calendar date square to edit that day's status inline.</span>
+                <span>💡 Single click to toggle Present/Absent. Double click for detailed edit.</span>
               </div>
             </div>
 

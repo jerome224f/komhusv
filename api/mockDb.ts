@@ -110,7 +110,7 @@ export interface SystemNotification {
 // DEMO MOCK DATASET
 // -----------------------------------------------------------------------------
 const ORG_1_ID = 'd7b322a3-2c13-4e4f-b67f-94ad7b1df6f2';
-const ORG_2_ID = 'e2c455b8-3e24-5f5f-c78g-05be8c2eg7g3';
+const ORG_2_ID = 'e2c455b8-3e24-5f5f-c78a-05be8c2ea7a3';
 
 const DEPT_1_ID = 'a1a1a1a1-1111-1111-1111-111111111111';
 const DEPT_2_ID = 'b2b2b2b2-2222-2222-2222-222222222222';
@@ -122,8 +122,8 @@ const EMP_3_ID = 'e3e3e3e3-3333-3333-3333-333333333333';
 const EMP_4_ID = 'e4e4e4e4-4444-4444-4444-444444444444';
 const EMP_5_ID = 'e5e5e5e5-5555-5555-5555-555555555555';
 
-const REL_1_ID = 'r1r1r1r1-1111-1111-1111-111111111111';
-const REL_2_ID = 'r2r2r2r2-2222-2222-2222-222222222222';
+const REL_1_ID = 'd1d1d1d1-1111-1111-1111-111111111111';
+const REL_2_ID = 'd2d2d2d2-2222-2222-2222-222222222222';
 
 export const mockUsers: User[] = [
   {

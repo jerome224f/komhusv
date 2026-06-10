@@ -7,8 +7,8 @@ const app = express();
 app.use(express.json());
 
 // Initialize Supabase Client
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
+const supabaseUrl = process.env.SUPABASE_URL || 'https://zqcguxgqsmmnubigpdnw.supabase.co';
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpxY2d1eGdxc21tbnViaWdwZG53Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA3MjcyNTgsImV4cCI6MjA5NjMwMzI1OH0.wPOCY3vnMH6P_hsW12LSA34eF5Qaj-sL4QHby2HoEoU';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 let databaseConnected = false;

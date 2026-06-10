@@ -367,34 +367,49 @@ app.get('/api/attendance/relievers', async (req, res) => {
     res.json(toCamel(data));
   } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
-
 app.post('/api/attendance/upsert', async (req, res) => {
   try {
     const records = req.body;
     if (!Array.isArray(records)) return res.status(400).json({ error: 'Request body must be an array of records' });
-    const dbRecords = toSnake(records);
-    for (const record of dbRecords) {
+
+    for (const record of records) {
+      // Convert camelCase from frontend to snake_case for DB
+      const employeeId = record.employeeId ?? record.employee_id;
+      const date = record.date;
+      const status = record.status;
+      const overtimeHours = record.overtimeHours ?? record.overtime_hours ?? 0;
+      const relieverEmployeeId = record.relieverEmployeeId ?? record.reliever_employee_id ?? null;
+      const relieverId = record.relieverId ?? record.reliever_id ?? null;
+
+      if (!employeeId || !date || !status) {
+        continue; // skip malformed records
+      }
+
       const { data: existing, error: checkError } = await supabase
         .from('attendance_records').select('id')
-        .eq('employee_id', record.employee_id).eq('date', record.date);
+        .eq('employee_id', employeeId).eq('date', date);
       if (checkError) throw checkError;
-
-      const updatePayload: any = {
-        status: record.status,
-        overtime_hours: record.overtime_hours,
-      };
-      if ('reliever_employee_id' in record) updatePayload.reliever_employee_id = record.reliever_employee_id;
-      if ('reliever_id' in record) updatePayload.reliever_id = record.reliever_id;
 
       if (existing && existing.length > 0) {
         const { error: updateError } = await supabase.from('attendance_records')
-          .update(updatePayload)
+          .update({
+            status,
+            overtime_hours: overtimeHours,
+            reliever_employee_id: relieverEmployeeId,
+            reliever_id: relieverId,
+          })
           .eq('id', existing[0].id);
         if (updateError) throw updateError;
       } else {
-        if (!record.id) record.id = randomUUID();
-        const insertPayload = { ...record, ...updatePayload };
-        const { error: insertError } = await supabase.from('attendance_records').insert([insertPayload]);
+        const { error: insertError } = await supabase.from('attendance_records').insert([{
+          id: randomUUID(),
+          employee_id: employeeId,
+          date,
+          status,
+          overtime_hours: overtimeHours,
+          reliever_employee_id: relieverEmployeeId,
+          reliever_id: relieverId,
+        }]);
         if (insertError) throw insertError;
       }
     }

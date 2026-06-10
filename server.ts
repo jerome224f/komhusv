@@ -472,52 +472,53 @@ app.get('/api/attendance/relievers', async (req, res) => {
 
 app.post('/api/attendance/upsert', async (req, res) => {
   try {
-    const records = req.body; // Expects an array of AttendanceRecords
+    const records = req.body;
     if (!Array.isArray(records)) {
       return res.status(400).json({ error: 'Request body must be an array of records' });
     }
 
-    const dbRecords = toSnake(records);
+    for (const record of records) {
+      // Explicitly extract fields — handle both camelCase (frontend) and snake_case
+      const employeeId = record.employeeId ?? record.employee_id;
+      const date = record.date;
+      const status = record.status;
+      const overtimeHours = record.overtimeHours ?? record.overtime_hours ?? 0;
+      const relieverEmployeeId = record.relieverEmployeeId ?? record.reliever_employee_id ?? null;
+      const relieverId = record.relieverId ?? record.reliever_id ?? null;
 
-    for (const record of dbRecords) {
-      // Check if record exists for this employee and date
+      if (!employeeId || !date || !status) continue;
+
       const { data: existing, error: checkError } = await supabase
         .from('attendance_records')
         .select('id')
-        .eq('employee_id', record.employee_id)
-        .eq('date', record.date);
+        .eq('employee_id', employeeId)
+        .eq('date', date);
 
       if (checkError) throw checkError;
 
-      const updatePayload: any = {
-        status: record.status,
-        overtime_hours: record.overtime_hours
-      };
-      // Include reliever_employee_id if provided
-      if ('reliever_employee_id' in record) {
-        updatePayload.reliever_employee_id = record.reliever_employee_id;
-      }
-      // Include reliever_id (new relievers table FK) if provided
-      if ('reliever_id' in record) {
-        updatePayload.reliever_id = record.reliever_id;
-      }
-
       if (existing && existing.length > 0) {
-        // Update
         const { error: updateError } = await supabase
           .from('attendance_records')
-          .update(updatePayload)
+          .update({
+            status,
+            overtime_hours: overtimeHours,
+            reliever_employee_id: relieverEmployeeId,
+            reliever_id: relieverId,
+          })
           .eq('id', existing[0].id);
-
         if (updateError) throw updateError;
       } else {
-        // Insert
-        if (!record.id) record.id = crypto.randomUUID();
-        const insertPayload = { ...record, ...updatePayload };
         const { error: insertError } = await supabase
           .from('attendance_records')
-          .insert([insertPayload]);
-
+          .insert([{
+            id: crypto.randomUUID(),
+            employee_id: employeeId,
+            date,
+            status,
+            overtime_hours: overtimeHours,
+            reliever_employee_id: relieverEmployeeId,
+            reliever_id: relieverId,
+          }]);
         if (insertError) throw insertError;
       }
     }
@@ -528,6 +529,7 @@ app.post('/api/attendance/upsert', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 
 // ----------------------------------------------------
 // RELIEVERS

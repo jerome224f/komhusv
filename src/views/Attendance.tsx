@@ -546,7 +546,8 @@ export function Attendance() {
     worksheet['!cols'][4] = { wch: 15 }; // Dept width
     worksheet['!cols'][5] = { wch: 15 }; // Desig width
 
-    XLSX.writeFile(workbook, `Attendance_Register_${selectedOrgId.slice(0,4)}_${registerMonth}.xlsx`);
+    const orgSuffix = selectedOrgId ? selectedOrgId.slice(0, 4) : 'All';
+    XLSX.writeFile(workbook, `Attendance_Register_${orgSuffix}_${registerMonth}.xlsx`);
   };
 
   // ---------------------------------------------------------------------------
@@ -1120,7 +1121,7 @@ export function Attendance() {
       {/* -----------------------------------------------------------------------
           TAB 1: DAILY MARKING CONTENT
           ----------------------------------------------------------------------- */}
-      {activeTab === 'daily' && selectedOrgId && (
+      {activeTab === 'daily' && (
         <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm flex flex-col min-h-[400px]">
           <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row gap-4 justify-between items-center bg-gray-50/70 shrink-0">
             <div className="relative w-full md:w-64">
@@ -1254,7 +1255,7 @@ export function Attendance() {
                               <option value="">— No Reliever —</option>
                               <optgroup label="Registered Relievers">
                                 {relievers
-                                  .filter(r => r.organizationId === selectedOrgId)
+                                  .filter(r => !selectedOrgId || r.organizationId === selectedOrgId || r.organizationId === null)
                                   .map(r => (
                                     <option key={r.id} value={r.id}>{r.name} ({r.designation || 'Reliever'})</option>
                                   ))
@@ -1305,7 +1306,7 @@ export function Attendance() {
       {/* -----------------------------------------------------------------------
           TAB 2: MONTHLY REGISTER CONTENT
           ----------------------------------------------------------------------- */}
-      {activeTab === 'register' && selectedOrgId && (
+      {activeTab === 'register' && (
         <div className="space-y-6">
           
           {/* STATS & SVG PAGE GRAPH PANEL */}
@@ -1618,7 +1619,7 @@ export function Attendance() {
                         <option value="">— No Reliever —</option>
                         <optgroup label="Registered Relievers">
                           {relievers
-                            .filter(r => r.organizationId === selectedOrgId)
+                            .filter(r => !selectedOrgId || r.organizationId === selectedOrgId || r.organizationId === null)
                             .map(r => (
                               <option key={r.id} value={r.id}>{r.name} ({r.designation || 'Reliever'})</option>
                             ))
@@ -1626,7 +1627,7 @@ export function Attendance() {
                         </optgroup>
                         <optgroup label="Employees">
                           {allEmployees
-                            .filter(e => e.id !== editingCell.employeeId && e.organizationId === selectedOrgId)
+                            .filter(e => e.id !== editingCell.employeeId && (!selectedOrgId || e.organizationId === selectedOrgId))
                             .map(e => (
                               <option key={e.id} value={e.id}>{e.name} ({e.designation || 'Staff'})</option>
                             ))
@@ -2025,7 +2026,7 @@ export function Attendance() {
                           {relievers
                             .filter(r => {
                               const emp = allEmployees.find(e => e.id === individualEmpId);
-                              return emp ? r.organizationId === emp.organizationId : true;
+                              return emp ? (r.organizationId === emp.organizationId || r.organizationId === null) : true;
                             })
                             .map(r => (
                               <option key={r.id} value={r.id}>{r.name} ({r.designation || 'Reliever'})</option>

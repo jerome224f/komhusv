@@ -131,7 +131,7 @@ const payrollsTable = {
 const attendanceTable = {
   ...createApiTable<AttendanceRecord>('attendance_records'),
   getByDateAndOrg: async (datePrefix: string, orgId: string): Promise<AttendanceRecord[]> => {
-    let query = supabase.from('attendance_records').select('*, employees!inner(organization_id)');
+    let query = supabase.from('attendance_records').select('*, emp:employees!attendance_records_employee_id_fkey!inner(organization_id)');
     if (datePrefix.length === 10) {
       query = query.eq('date', datePrefix);
     } else {
@@ -140,7 +140,10 @@ const attendanceTable = {
       const endOfMonthStr = new Date(nextMonth.getTime() - 86400000).toISOString().split('T')[0];
       query = query.gte('date', `${datePrefix}-01`).lte('date', endOfMonthStr);
     }
-    const { data, error } = await query.eq('employees.organization_id', orgId);
+    if (orgId) {
+      query = query.eq('emp.organization_id', orgId);
+    }
+    const { data, error } = await query;
     if (error) { console.error('Error fetching attendance by date/org:', error); return []; }
     
     if (!data) return [];

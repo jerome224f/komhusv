@@ -19,7 +19,7 @@ export function EmployeeProfileModal({ employee, organization, onClose }: Employ
     const loadAttendance = async () => {
       setIsLoading(true);
       try {
-        const data = await api.attendance.getByEmployee(employee.id);
+        const data = await api.attendance.getByEmployeeAndMonth(employee.id, selectedMonth);
         setAllAttendance(data);
       } catch (err) {
         console.error('Failed to load attendance:', err);
@@ -28,7 +28,7 @@ export function EmployeeProfileModal({ employee, organization, onClose }: Employ
       }
     };
     loadAttendance();
-  }, [employee.id]);
+  }, [employee.id, selectedMonth]);
 
   const monthStart = startOfMonth(parseISO(`${selectedMonth}-01`));
   const monthEnd = endOfMonth(monthStart);

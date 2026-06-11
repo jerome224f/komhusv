@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Menu, Bell, Check, Info, AlertTriangle, AlertCircle, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { SystemNotification } from '../types';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isValid } from 'date-fns';
 
 interface HeaderProps {
   setSidebarOpen: (open: boolean) => void;
@@ -118,7 +118,9 @@ export function Header({ setSidebarOpen, title, user }: HeaderProps) {
                             {n.title}
                           </h4>
                           <span className="text-[10px] text-gray-400 whitespace-nowrap">
-                            {format(parseISO(n.timestamp), 'MMM d, HH:mm')}
+                            {n.timestamp && isValid(parseISO(n.timestamp))
+                              ? format(parseISO(n.timestamp), 'MMM d, HH:mm')
+                              : ''}
                           </span>
                         </div>
                         <p className={`text-xs mt-1 leading-relaxed ${!n.read ? 'text-gray-700' : 'text-gray-500'}`}>

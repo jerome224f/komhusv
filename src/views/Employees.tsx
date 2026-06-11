@@ -106,7 +106,7 @@ export function Employees() {
   };
 
   const filteredEmps = employees.filter(emp => {
-    const matchesSearch = emp.name.toLowerCase().includes(searchTerm.toLowerCase()) || emp.mobileNumber.includes(searchTerm);
+    const matchesSearch = emp.name.toLowerCase().includes(searchTerm.toLowerCase()) || (emp.mobileNumber || '').includes(searchTerm);
     const matchesOrg = filterOrg ? emp.organizationId === filterOrg : true;
     return matchesSearch && matchesOrg;
   });
@@ -179,7 +179,7 @@ export function Employees() {
                 </tr>
               ) : (
                 filteredEmps.map((emp) => {
-                  const org = organizations.find(o => o.id === emp.organizationId) || { name: 'Unknown' };
+                  const org = organizations.find(o => o.id === emp.organizationId) || { id: '', name: 'Unknown', contactPerson: '', contactNumber: '', address: '', email: '', status: 'Active' as const, createdAt: '' };
                   return (
                     <tr key={emp.id} className="hover:bg-gray-50 transition-colors">
                       <td className="p-4">
@@ -300,7 +300,7 @@ export function Employees() {
             
             <div className="p-6 overflow-y-auto">
               <EmployeeForm 
-                initialData={editingId ? employees.find(e => e.id === editingId) : null}
+                initialData={editingId ? (employees.find(e => e.id === editingId) ?? null) : null}
                 organizations={organizations}
                 departments={departments}
                 onSubmit={handleSave}

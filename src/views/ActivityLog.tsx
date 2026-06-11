@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../lib/api';
-import { ActivityLog } from '../types';
+import type { ActivityLog as ActivityLogEntry } from '../types';
 import { Search, History, Loader2, Calendar } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isValid } from 'date-fns';
 
 export function ActivityLogView() {
-  const [logs, setLogs] = useState<ActivityLog[]>([]);
+  const [logs, setLogs] = useState<ActivityLogEntry[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -27,7 +27,7 @@ export function ActivityLogView() {
 
   const filteredLogs = logs.filter(log => 
     log.action.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    log.description.toLowerCase().includes(searchTerm.toLowerCase())
+    (log.description || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
@@ -71,10 +71,12 @@ export function ActivityLogView() {
                  <div className="flex-1">
                    <div className="flex justify-between items-start">
                      <h3 className="font-semibold text-gray-900">{log.action}</h3>
-                     <span className="text-xs font-medium text-gray-500 flex items-center gap-1">
-                       <Calendar className="w-3.5 h-3.5" />
-                       {format(parseISO(log.timestamp), 'MMM dd, yyyy HH:mm')}
-                     </span>
+                      <span className="text-xs font-medium text-gray-500 flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5" />
+                        {log.timestamp && isValid(parseISO(log.timestamp))
+                          ? format(parseISO(log.timestamp), 'MMM dd, yyyy HH:mm')
+                          : 'N/A'}
+                      </span>
                    </div>
                    <p className="text-sm text-gray-600 mt-1">{log.description}</p>
                  </div>

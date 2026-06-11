@@ -19,10 +19,6 @@ export function MigrateData() {
   const [results, setResults] = useState<MigrationResult[]>([]);
   const [done, setDone] = useState(false);
 
-  useEffect(() => {
-    checkLocalData();
-  }, []);
-
   const checkLocalData = () => {
     setIsChecking(true);
     try {
@@ -33,7 +29,7 @@ export function MigrateData() {
       } else {
         setLocalData(null);
       }
-    } catch {
+    } catch (_e) {
       setLocalData(null);
     } finally {
       setIsChecking(false);
@@ -53,6 +49,10 @@ export function MigrateData() {
   };
 
   const totalRecords = getCounts().reduce((s, t) => s + t.count, 0);
+
+  useEffect(() => {
+    checkLocalData();
+  }, []);
 
   const handleMigrate = async () => {
     if (!localData) return;

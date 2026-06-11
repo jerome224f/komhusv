@@ -3,8 +3,8 @@ import { api } from '../lib/api';
 import { Organization, Employee, Payroll } from '../types';
 import { Calculator, Download, Printer, Loader2 } from 'lucide-react';
 import { getDaysInMonth, format } from 'date-fns';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 import { SalarySlip } from '../components/SalarySlip';
 
 export function PayrollView() {
@@ -165,7 +165,7 @@ export function PayrollView() {
     doc.text(`OT Hours: ${payroll.overtimeHours}`, 160, 95);
 
     const otRate = Number(emp.overtimeRatePerHour) || 0;
-    autoTable(doc, {
+    (doc as any).autoTable({
       startY: 105,
       head: [['Earnings', 'Amount (₹)', 'Deductions', 'Amount (₹)']],
       body: [

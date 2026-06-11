@@ -70,7 +70,7 @@ export function DepartmentsView() {
 
   const filteredDepts = departments.filter(dep => {
     const matchesSearch = dep.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          dep.headOfDepartment.toLowerCase().includes(searchTerm.toLowerCase());
+                          (dep.headOfDepartment || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesOrg = selectedOrgId === 'all' || dep.organizationId === selectedOrgId;
     return matchesSearch && matchesOrg;
   });
@@ -185,7 +185,7 @@ export function DepartmentsView() {
             
             <div className="p-6 overflow-y-auto">
               <DepartmentForm
-                initialData={editingId ? departments.find(d => d.id === editingId) : null}
+                initialData={editingId ? (departments.find(d => d.id === editingId) ?? null) : null}
                 organizations={organizations}
                 onSubmit={handleSave}
                 onCancel={() => setIsModalOpen(false)}

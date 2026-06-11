@@ -233,7 +233,7 @@ export function Attendance() {
   const handleSelectAllDaily = () => {
     const filtered = dailyEmployees.filter(emp => 
       emp.name.toLowerCase().includes(dailySearch.toLowerCase()) || 
-      emp.mobileNumber.includes(dailySearch)
+      (emp.mobileNumber || '').includes(dailySearch)
     );
     if (dailySelectedEmpIds.size === filtered.length && filtered.length > 0) {
       setDailySelectedEmpIds(new Set());
@@ -254,7 +254,7 @@ export function Attendance() {
     } else {
       const filtered = dailyEmployees.filter(emp => 
         emp.name.toLowerCase().includes(dailySearch.toLowerCase()) || 
-        emp.mobileNumber.includes(dailySearch)
+        (emp.mobileNumber || '').includes(dailySearch)
       );
       filtered.forEach(emp => {
         const current = newMap[emp.id] || { status: 'Present', otHours: 0, relieverId: '' };
@@ -931,7 +931,7 @@ export function Attendance() {
   // Filters for lists
   const filteredDailyEmployees = dailyEmployees.filter(emp => 
     emp.name.toLowerCase().includes(dailySearch.toLowerCase()) || 
-    emp.mobileNumber.includes(dailySearch)
+    (emp.mobileNumber || '').includes(dailySearch)
   );
 
   const filteredRegisterEmployees = registerEmployees.filter(emp => 

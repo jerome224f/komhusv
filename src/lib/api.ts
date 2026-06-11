@@ -1,237 +1,308 @@
-import { Organization, Employee, AttendanceRecord, Advance, Payroll, Department, ActivityLog, SystemNotification, Reliever } from '../types';
+import { supabase } from './supabase';
+import {
+  Organization, Employee, AttendanceRecord, Advance,
+  Payroll, Department, ActivityLog, SystemNotification, Reliever, User
+} from '../types';
 
-// Helper function for making API calls
-async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(endpoint, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-    ...options,
-  });
+// Utility to convert camelCase to snake_case
+const toSnakeCase = (str: string) => str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-    throw new Error(error.error || `API Error: ${response.status}`);
+// Utility to convert snake_case to camelCase
+const toCamelCase = (str: string) => str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+
+// Recursively convert object keys
+const convertKeys = (obj: any, converter: (s: string) => string): any => {
+  if (Array.isArray(obj)) {
+    return obj.map(v => convertKeys(v, converter));
+  } else if (obj !== null && typeof obj === 'object' && !(obj instanceof Date)) {
+    return Object.keys(obj).reduce((result, key) => {
+      result[converter(key)] = convertKeys(obj[key], converter);
+      return result;
+    }, {} as any);
   }
+  return obj;
+};
 
-  if (response.status === 204) return undefined as T;
-  return response.json();
-}
+const toDB = (item: any) => convertKeys(item, toSnakeCase);
+const fromDB = (item: any) => convertKeys(item, toCamelCase);
 
-export const api = {
-  login: async (username: string, password: string): Promise<{ username: string; role: string; name: string }> => {
-    return fetchAPI('/api/login', {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    });
+const createApiTable = <T extends { id: string }>(tableName: string) => {
+  return {
+    getAll: async (): Promise<T[]> => {
+      const { data, error } = await supabase.from(tableName).select('*');
+      if (error) { console.error(`Error fetching ${tableName}:`, error); return []; }
+      return data ? data.map(fromDB) : [];
+    },
+    getById: async (id: string): Promise<T | undefined> => {
+      const { data, error } = await supabase.from(tableName).select('*').eq('id', id).single();
+      if (error) { console.error(`Error fetching ${tableName} by id:`, error); return undefined; }
+      return data ? fromDB(data) : undefined;
+    },
+    insert: async (item: Omit<T, 'id'>): Promise<T> => {
+      const { data, error } = await supabase.from(tableName).insert(toDB(item)).select().single();
+      if (error) { console.error(`Error inserting into ${tableName}:`, error); throw error; }
+      return fromDB(data);
+    },
+    create: async (item: Omit<T, 'id'>): Promise<T> => {
+      const { data, error } = await supabase.from(tableName).insert(toDB(item)).select().single();
+      if (error) { console.error(`Error creating in ${tableName}:`, error); throw error; }
+      return fromDB(data);
+    },
+    update: async (id: string, item: Partial<T>): Promise<T | undefined> => {
+      const { data, error } = await supabase.from(tableName).update(toDB(item)).eq('id', id).select().single();
+      if (error) { console.error(`Error updating ${tableName}:`, error); return undefined; }
+      return data ? fromDB(data) : undefined;
+    },
+    delete: async (id: string): Promise<void> => {
+      const { error } = await supabase.from(tableName).delete().eq('id', id);
+      if (error) { console.error(`Error deleting from ${tableName}:`, error); throw error; }
+    },
+  };
+};
+
+// ─── Payroll ────────────────────────────────────────────────────────────────
+const payrollsTable = {
+  ...createApiTable<Payroll>('payrolls'),
+  getAll: async (month?: string): Promise<Payroll[]> => {
+    let query = supabase.from('payrolls').select('*');
+    if (month) query = query.eq('month', month);
+    const { data, error } = await query;
+    if (error) { console.error('Error fetching payrolls:', error); return []; }
+    return data ? data.map(fromDB) : [];
   },
+  upsert: async (item: Partial<Payroll>): Promise<Payroll> => {
+    const { data, error } = await supabase
+      .from('payrolls')
+      .upsert(toDB(item), { onConflict: 'employee_id,month' })
+      .select().single();
+    if (error) throw error;
+    return fromDB(data);
+  },
+};
 
-  dashboard: {
-    getStats: async () => {
-      return fetchAPI('/api/dashboard/stats');
+// ─── Attendance ──────────────────────────────────────────────────────────────
+const attendanceTable = {
+  ...createApiTable<AttendanceRecord>('attendance_records'),
+  getByDateAndOrg: async (datePrefix: string, orgId: string): Promise<AttendanceRecord[]> => {
+    const { data, error } = await supabase
+      .from('attendance_records')
+      .select('*, employees!inner(organization_id)')
+      .like('date', `${datePrefix}%`)
+      .eq('employees.organization_id', orgId);
+    if (error) { console.error('Error fetching attendance by date/org:', error); return []; }
+    return data ? data.map(fromDB) : [];
+  },
+  upsertMultiple: async (records: Partial<AttendanceRecord>[]): Promise<void> => {
+    if (!records.length) return;
+    const { error } = await supabase
+      .from('attendance_records')
+      .upsert(records.map(toDB), { onConflict: 'employee_id,date' });
+    if (error) throw error;
+  },
+  getByEmployeeAndMonth: async (empId: string, month: string): Promise<AttendanceRecord[]> => {
+    const { data, error } = await supabase
+      .from('attendance_records').select('*')
+      .eq('employee_id', empId).like('date', `${month}-%`);
+    if (error) return [];
+    return data ? data.map(fromDB) : [];
+  },
+  getRelievers: async (month: string): Promise<AttendanceRecord[]> => {
+    const { data, error } = await supabase
+      .from('attendance_records').select('*')
+      .not('reliever_id', 'is', null).like('date', `${month}-%`);
+    if (error) return [];
+    return data ? data.map(fromDB) : [];
+  },
+};
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+const notificationsTable = {
+  ...createApiTable<SystemNotification>('system_notifications'),
+  markAsRead: async (id: string): Promise<void> => {
+    const { error } = await supabase
+      .from('system_notifications').update({ read: true }).eq('id', id);
+    if (error) console.error('Error marking notification as read:', error);
+  },
+  markAllAsRead: async (): Promise<void> => {
+    const { error } = await supabase
+      .from('system_notifications').update({ read: true }).eq('read', false);
+    if (error) console.error('Error marking all notifications as read:', error);
+  },
+};
+
+// ─── Settings ────────────────────────────────────────────────────────────────
+const settingsTable = {
+  backup: async (): Promise<any> => {
+    const [orgs, depts, emps, atts, advs, pays] = await Promise.all([
+      supabase.from('organizations').select('*'),
+      supabase.from('departments').select('*'),
+      supabase.from('employees').select('*'),
+      supabase.from('attendance_records').select('*'),
+      supabase.from('advances').select('*'),
+      supabase.from('payrolls').select('*'),
+    ]);
+    return {
+      organizations: orgs.data || [],
+      departments: depts.data || [],
+      employees: emps.data || [],
+      attendance: atts.data || [],
+      advances: advs.data || [],
+      payrolls: pays.data || [],
+      timestamp: new Date().toISOString(),
+    };
+  },
+  restore: async (data: any): Promise<void> => {
+    if (!data) return;
+    if (data.organizations && data.organizations.length > 0) {
+      const { error } = await supabase.from('organizations').upsert(data.organizations.map(toDB));
+      if (error) throw error;
+    }
+    if (data.departments && data.departments.length > 0) {
+      const { error } = await supabase.from('departments').upsert(data.departments.map(toDB));
+      if (error) throw error;
+    }
+    if (data.employees && data.employees.length > 0) {
+      const { error } = await supabase.from('employees').upsert(data.employees.map(toDB));
+      if (error) throw error;
+    }
+    const attendanceRecords = data.attendance || data.attendanceRecords || [];
+    if (attendanceRecords.length > 0) {
+      const { error } = await supabase.from('attendance_records').upsert(attendanceRecords.map(toDB));
+      if (error) throw error;
+    }
+    if (data.advances && data.advances.length > 0) {
+      const { error } = await supabase.from('advances').upsert(data.advances.map(toDB));
+      if (error) throw error;
+    }
+    if (data.payrolls && data.payrolls.length > 0) {
+      const { error } = await supabase.from('payrolls').upsert(data.payrolls.map(toDB));
+      if (error) throw error;
     }
   },
+};
 
-  notifications: {
-    getAll: async (): Promise<SystemNotification[]> => {
-      return fetchAPI('/api/notifications');
-    },
-    getUnreadCount: async (): Promise<number> => {
-      const all = await fetchAPI<SystemNotification[]>('/api/notifications');
-      return all.filter(n => !n.read).length;
-    },
-    markAsRead: async (id: string): Promise<SystemNotification | undefined> => {
-      return fetchAPI(`/api/notifications/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ read: true }),
-      });
-    },
-    markAllAsRead: async (): Promise<void> => {
-      return fetchAPI('/api/notifications/mark-all-read', { method: 'POST' });
-    },
-    create: async (data: Omit<SystemNotification, 'id'>): Promise<SystemNotification> => {
-      return fetchAPI('/api/notifications', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-    }
-  },
+// ─── Dashboard ───────────────────────────────────────────────────────────────
+const dashboardTable = {
+  getStats: async (): Promise<any> => {
+    const today = new Date().toISOString().split('T')[0];
+    const thisMonth = today.slice(0, 7); // YYYY-MM
 
-  organizations: {
-    getAll: async (): Promise<Organization[]> => {
-      return fetchAPI('/api/organizations');
-    },
-    getById: async (id: string): Promise<Organization | undefined> => {
-      return fetchAPI(`/api/organizations/${id}`);
-    },
-    create: async (data: Omit<Organization, 'id' | 'createdAt'>): Promise<Organization> => {
-      if (!data.name || !data.contactPerson || !data.email) {
-        throw new Error("Validation Error: Missing required fields");
+    const [
+      { count: totalOrganizations },
+      { count: totalEmployees },
+      { count: presentToday },
+      { count: absentTodayCount },
+      { count: leaveToday },
+      { count: totalRelievers },
+      { data: relieversRaw },
+      { data: absentRaw },
+      { data: orgsRaw },
+      { data: empsRaw },
+      { data: payrollsRaw },
+      { data: heatmapRaw },
+    ] = await Promise.all([
+      supabase.from('organizations').select('*', { count: 'exact', head: true }).eq('status', 'Active'),
+      supabase.from('employees').select('*', { count: 'exact', head: true }).eq('status', 'Active'),
+      supabase.from('attendance_records').select('*', { count: 'exact', head: true }).eq('date', today).eq('status', 'Present'),
+      supabase.from('attendance_records').select('*', { count: 'exact', head: true }).eq('date', today).eq('status', 'Absent'),
+      supabase.from('attendance_records').select('*', { count: 'exact', head: true }).eq('date', today).eq('status', 'Leave'),
+      supabase.from('relievers').select('*', { count: 'exact', head: true }),
+      supabase.from('attendance_records').select('reliever_id').eq('date', today).not('reliever_id', 'is', null),
+      supabase.from('attendance_records').select('employee_id, reliever_id, reliever_employee_id').eq('date', today).eq('status', 'Absent'),
+      supabase.from('organizations').select('id, name').eq('status', 'Active'),
+      supabase.from('employees').select('id, name, mobile_number, organization_id, status').eq('status', 'Active'),
+      supabase.from('payrolls').select('net_salary').eq('month', thisMonth),
+      supabase.from('attendance_records').select('date, employee_id, status').like('date', `${thisMonth}-%`),
+    ]);
+
+    // Build absent employees list
+    const orgsMap: Record<string, any> = {};
+    (orgsRaw || []).forEach((o: any) => { orgsMap[o.id] = o; });
+    const empsMap: Record<string, any> = {};
+    (empsRaw || []).forEach((e: any) => { empsMap[e.id] = e; });
+
+    const absentEmployeesToday = (absentRaw || []).map((a: any) => {
+      const emp = empsMap[a.employee_id];
+      if (!emp) return null;
+      const org = orgsMap[emp.organization_id];
+      let reliever = null;
+      if (a.reliever_employee_id && empsMap[a.reliever_employee_id]) {
+        const rel = empsMap[a.reliever_employee_id];
+        reliever = { name: rel.name, type: 'Internal', mobileNumber: rel.mobile_number };
       }
-      return fetchAPI('/api/organizations', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-    },
-    update: async (id: string, data: Partial<Organization>): Promise<Organization | undefined> => {
-      return fetchAPI(`/api/organizations/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      });
-    },
-    delete: async (id: string): Promise<void> => {
-      return fetchAPI(`/api/organizations/${id}`, { method: 'DELETE' });
-    }
-  },
+      return emp && org ? {
+        employee: fromDB(emp),
+        org: fromDB(org),
+        reliever,
+      } : null;
+    }).filter(Boolean);
 
-  departments: {
-    getAll: async (): Promise<Department[]> => {
-      return fetchAPI('/api/departments');
-    },
-    getByOrgId: async (orgId: string): Promise<Department[]> => {
-      const all = await fetchAPI<Department[]>('/api/departments');
-      return all.filter(d => d.organizationId === orgId);
-    },
-    create: async (data: Omit<Department, 'id'>): Promise<Department> => {
-      return fetchAPI('/api/departments', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-    },
-    update: async (id: string, data: Partial<Department>): Promise<Department | undefined> => {
-      return fetchAPI(`/api/departments/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      });
-    },
-    delete: async (id: string): Promise<void> => {
-      return fetchAPI(`/api/departments/${id}`, { method: 'DELETE' });
-    }
-  },
+    // Payroll cost this month
+    const payrollCost = (payrollsRaw || []).reduce((sum: number, p: any) => sum + (Number(p.net_salary) || 0), 0);
 
-  logs: {
-    getAll: async (): Promise<ActivityLog[]> => {
-      return fetchAPI('/api/logs');
-    },
-    create: async (data: Omit<ActivityLog, 'id'>): Promise<ActivityLog> => {
-      return fetchAPI('/api/logs', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-    }
-  },
+    // Heatmap: group attendance by date
+    const dayMap: Record<string, { present: number; total: number }> = {};
+    const activeEmpCount = totalEmployees || 0;
+    (heatmapRaw || []).forEach((r: any) => {
+      if (!dayMap[r.date]) dayMap[r.date] = { present: 0, total: 0 };
+      dayMap[r.date].total++;
+      if (r.status === 'Present' || r.status === 'Half Day') dayMap[r.date].present++;
+    });
 
-  employees: {
-    getAll: async (): Promise<Employee[]> => {
-      return fetchAPI('/api/employees');
-    },
-    getById: async (id: string): Promise<Employee | undefined> => {
-      return fetchAPI(`/api/employees/${id}`);
-    },
-    create: async (data: Omit<Employee, 'id'>): Promise<Employee> => {
-      return fetchAPI('/api/employees', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-    },
-    update: async (id: string, data: Partial<Employee>): Promise<Employee | undefined> => {
-      return fetchAPI(`/api/employees/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      });
-    },
-    delete: async (id: string): Promise<void> => {
-      return fetchAPI(`/api/employees/${id}`, { method: 'DELETE' });
-    }
-  },
+    const year = parseInt(thisMonth.split('-')[0]);
+    const month = parseInt(thisMonth.split('-')[1]) - 1;
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const todayDate = new Date();
 
-  attendance: {
-    getByDateAndOrg: async (date: string, orgId: string): Promise<AttendanceRecord[]> => {
-      return fetchAPI(`/api/attendance?date=${date}`);
-    },
-    getByEmployee: async (employeeId: string): Promise<AttendanceRecord[]> => {
-      return fetchAPI(`/api/attendance?employeeId=${employeeId}`);
-    },
-    getByEmployeeAndMonth: async (employeeId: string, month: string): Promise<AttendanceRecord[]> => {
-      return fetchAPI(`/api/attendance?employeeId=${employeeId}&month=${month}`);
-    },
-    getRelievers: async (date: string): Promise<AttendanceRecord[]> => {
-      return fetchAPI(`/api/attendance/relievers?date=${date}`);
-    },
-    upsertMultiple: async (records: (Omit<AttendanceRecord, 'id'> & { relieverEmployeeId?: string | null })[]): Promise<void> => {
-      return fetchAPI('/api/attendance/upsert', {
-        method: 'POST',
-        body: JSON.stringify(records),
-      });
-    }
-  },
+    const heatmapData = Array.from({ length: daysInMonth }, (_, i) => {
+      const day = String(i + 1).padStart(2, '0');
+      const date = `${thisMonth}-${day}`;
+      const isPast = new Date(date) <= todayDate;
+      const dayData = dayMap[date];
+      const percentage = isPast && activeEmpCount > 0 && dayData
+        ? (dayData.present / activeEmpCount) * 100
+        : isPast && activeEmpCount > 0 ? 0 : null;
+      return {
+        date,
+        percentage: percentage !== null ? Math.min(100, percentage) : null,
+        label: isPast ? (percentage !== null ? `${Math.round(percentage)}% present` : 'No data') : 'Future',
+      };
+    });
 
-  advances: {
-    getAll: async (): Promise<Advance[]> => {
-      return fetchAPI('/api/advances');
-    },
-    create: async (data: Omit<Advance, 'id'>): Promise<Advance> => {
-      return fetchAPI('/api/advances', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-    },
-    delete: async (id: string): Promise<void> => {
-      return fetchAPI(`/api/advances/${id}`, { method: 'DELETE' });
-    }
+    return {
+      totalOrganizations: totalOrganizations || 0,
+      totalEmployees: totalEmployees || 0,
+      presentToday: presentToday || 0,
+      absentToday: absentTodayCount || 0,
+      leaveToday: leaveToday || 0,
+      payrollCost,
+      totalRelievers: totalRelievers || 0,
+      relieversToday: (relieversRaw || []).length,
+      absentEmployeesToday,
+      heatmapData,
+    };
   },
+};
 
-  payrolls: {
-    getAll: async (month?: string): Promise<Payroll[]> => {
-      const url = month ? `/api/payrolls?month=${month}` : '/api/payrolls';
-      return fetchAPI(url);
-    },
-    upsert: async (data: Omit<Payroll, 'id'>): Promise<Payroll> => {
-      return fetchAPI('/api/payrolls', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-    },
-    update: async (id: string, data: Partial<Payroll>): Promise<Payroll> => {
-      return fetchAPI(`/api/payrolls/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      });
-    }
+// ─── Exports ─────────────────────────────────────────────────────────────────
+export const api = {
+  organizations: createApiTable<Organization>('organizations'),
+  departments: createApiTable<Department>('departments'),
+  employees: createApiTable<Employee>('employees'),
+  attendance: attendanceTable,
+  advances: createApiTable<Advance>('advances'),
+  payrolls: payrollsTable,
+  logs: createApiTable<ActivityLog>('activity_logs'),
+  notifications: notificationsTable,
+  relievers: createApiTable<Reliever>('relievers'),
+  users: createApiTable<User>('users'),
+  settings: settingsTable,
+  dashboard: dashboardTable,
+  login: async (username: string, password: string): Promise<any> => {
+    const { data, error } = await supabase
+      .from('users').select('*')
+      .eq('username', username).eq('password', password).single();
+    if (error || !data) throw new Error('Invalid credentials');
+    return fromDB(data);
   },
-
-  settings: {
-    backup: async () => {
-      return fetchAPI('/api/settings/backup');
-    },
-    restore: async (data: any) => {
-      return fetchAPI('/api/settings/restore', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-    }
-  },
-
-  relievers: {
-    getAll: async (orgId?: string): Promise<Reliever[]> => {
-      const url = orgId ? `/api/relievers?orgId=${orgId}` : '/api/relievers';
-      return fetchAPI(url);
-    },
-    create: async (data: Omit<Reliever, 'id' | 'createdAt'>): Promise<Reliever> => {
-      return fetchAPI('/api/relievers', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-    },
-    update: async (id: string, data: Partial<Reliever>): Promise<Reliever | undefined> => {
-      return fetchAPI(`/api/relievers/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      });
-    },
-    delete: async (id: string): Promise<void> => {
-      return fetchAPI(`/api/relievers/${id}`, { method: 'DELETE' });
-    }
-  }
 };

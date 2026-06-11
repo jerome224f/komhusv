@@ -11,9 +11,11 @@ export type Role = 'Super Admin' | 'HR Executive' | 'Manager';
 
 export interface User {
   id: string;
+  username: string;
   name: string;
   role: Role;
   email: string;
+  password?: string;
 }
 
 export interface Organization {
@@ -42,8 +44,8 @@ export interface Department {
   id: string;
   organizationId: string;
   name: string;
-  headOfDepartment: string;
-  description: string;
+  headOfDepartment: string | null;
+  description: string | null;
 }
 
 export interface Employee {

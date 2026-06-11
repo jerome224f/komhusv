@@ -3,7 +3,7 @@ import { api } from '../lib/api';
 import { Employee, Organization, Department, Payroll } from '../types';
 import { Download, FileSpreadsheet, FileText, Table, Layers, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 export function Reports() {

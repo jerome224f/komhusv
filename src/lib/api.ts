@@ -106,9 +106,21 @@ const payrollsTable = {
     return data ? data.map(fromDB) : [];
   },
   upsert: async (item: Partial<Payroll>): Promise<Payroll> => {
+    let finalItem = { ...item };
+    if (!finalItem.id && finalItem.employeeId && finalItem.month) {
+      const { data } = await supabase
+        .from('payrolls')
+        .select('id')
+        .eq('employee_id', finalItem.employeeId)
+        .eq('month', finalItem.month)
+        .single();
+      if (data) {
+        finalItem.id = data.id;
+      }
+    }
     const { data, error } = await supabase
       .from('payrolls')
-      .upsert(toDB(item), { onConflict: 'employee_id,month' })
+      .upsert(toDB(finalItem))
       .select().single();
     if (error) throw error;
     return fromDB(data);
@@ -129,9 +141,55 @@ const attendanceTable = {
   },
   upsertMultiple: async (records: Partial<AttendanceRecord>[]): Promise<void> => {
     if (!records.length) return;
+
+    // Fetch existing records to inject their IDs and avoid relying on a custom unique constraint
+    const employeeIds = [...new Set(records.map(r => r.employeeId).filter(Boolean))];
+    const dates = [...new Set(records.map(r => r.date).filter(Boolean))];
+
+    if (employeeIds.length > 0 && dates.length > 0) {
+      const { data: existing } = await supabase
+        .from('attendance_records')
+        .select('id, employee_id, date')
+        .in('employee_id', employeeIds)
+        .in('date', dates);
+
+      if (existing) {
+        const existingMap = new Map(
+          existing.map(e => [`${e.employee_id}_${e.date}`, e.id])
+        );
+        records.forEach(r => {
+          if (!r.id) {
+            const key = `${r.employeeId}_${r.date}`;
+            if (existingMap.has(key)) {
+              r.id = existingMap.get(key);
+            }
+          }
+        });
+      }
+    }
+
+    // Crucial fix: Supabase/PostgREST requires all objects in an array to have the exact same keys.
+    // If some objects have an 'id' and others don't, it will either throw an error or ignore the 'id's.
+    const generateUUID = () => {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+      }
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    };
+
+    records.forEach(r => {
+      if (!r.id) {
+        r.id = generateUUID();
+      }
+    });
+
     const { error } = await supabase
       .from('attendance_records')
-      .upsert(records.map(toDB), { onConflict: 'employee_id,date' });
+      .upsert(records.map(toDB));
     if (error) throw error;
   },
   getByEmployeeAndMonth: async (empId: string, month: string): Promise<AttendanceRecord[]> => {

@@ -131,11 +131,16 @@ const payrollsTable = {
 const attendanceTable = {
   ...createApiTable<AttendanceRecord>('attendance_records'),
   getByDateAndOrg: async (datePrefix: string, orgId: string): Promise<AttendanceRecord[]> => {
-    const { data, error } = await supabase
-      .from('attendance_records')
-      .select('*, employees!inner(organization_id)')
-      .like('date', `${datePrefix}%`)
-      .eq('employees.organization_id', orgId);
+    let query = supabase.from('attendance_records').select('*, employees!inner(organization_id)');
+    if (datePrefix.length === 10) {
+      query = query.eq('date', datePrefix);
+    } else {
+      const nextMonth = new Date(datePrefix + '-01');
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+      const endOfMonthStr = new Date(nextMonth.getTime() - 86400000).toISOString().split('T')[0];
+      query = query.gte('date', `${datePrefix}-01`).lte('date', endOfMonthStr);
+    }
+    const { data, error } = await query.eq('employees.organization_id', orgId);
     if (error) { console.error('Error fetching attendance by date/org:', error); return []; }
     return data ? data.map(fromDB) : [];
   },
@@ -193,16 +198,28 @@ const attendanceTable = {
     if (error) throw error;
   },
   getByEmployeeAndMonth: async (empId: string, month: string): Promise<AttendanceRecord[]> => {
+    const nextMonth = new Date(month + '-01');
+    nextMonth.setMonth(nextMonth.getMonth() + 1);
+    const endOfMonthStr = new Date(nextMonth.getTime() - 86400000).toISOString().split('T')[0];
+
     const { data, error } = await supabase
       .from('attendance_records').select('*')
-      .eq('employee_id', empId).like('date', `${month}-%`);
+      .eq('employee_id', empId)
+      .gte('date', `${month}-01`)
+      .lte('date', endOfMonthStr);
     if (error) return [];
     return data ? data.map(fromDB) : [];
   },
   getRelievers: async (month: string): Promise<AttendanceRecord[]> => {
+    const nextMonth = new Date(month + '-01');
+    nextMonth.setMonth(nextMonth.getMonth() + 1);
+    const endOfMonthStr = new Date(nextMonth.getTime() - 86400000).toISOString().split('T')[0];
+
     const { data, error } = await supabase
       .from('attendance_records').select('*')
-      .not('reliever_id', 'is', null).like('date', `${month}-%`);
+      .not('reliever_id', 'is', null)
+      .gte('date', `${month}-01`)
+      .lte('date', endOfMonthStr);
     if (error) return [];
     return data ? data.map(fromDB) : [];
   },
@@ -279,6 +296,10 @@ const dashboardTable = {
   getStats: async (): Promise<any> => {
     const today = new Date().toISOString().split('T')[0];
     const thisMonth = today.slice(0, 7); // YYYY-MM
+    
+    const nextMonthDt = new Date(thisMonth + '-01');
+    nextMonthDt.setMonth(nextMonthDt.getMonth() + 1);
+    const endOfMonthStr = new Date(nextMonthDt.getTime() - 86400000).toISOString().split('T')[0];
 
     const [
       { count: totalOrganizations },
@@ -305,7 +326,7 @@ const dashboardTable = {
       supabase.from('organizations').select('id, name').eq('status', 'Active'),
       supabase.from('employees').select('id, name, mobile_number, organization_id, status').eq('status', 'Active'),
       supabase.from('payrolls').select('net_salary').eq('month', thisMonth),
-      supabase.from('attendance_records').select('date, employee_id, status').like('date', `${thisMonth}-%`),
+      supabase.from('attendance_records').select('date, employee_id, status').gte('date', `${thisMonth}-01`).lte('date', endOfMonthStr),
     ]);
 
     // Build absent employees list

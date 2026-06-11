@@ -32,7 +32,7 @@ git add .
 echo.
 
 echo [4/5] Committing changes...
-git commit -m "fix: attendance array key structure and UUID generator fallback" 2>nul
+git commit -m "fix: Postgres DATE column range queries for attendance fetching" 2>nul
 echo.
 
 echo [5/5] Pushing to GitHub (Vercel will auto-deploy)...

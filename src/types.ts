@@ -74,7 +74,7 @@ export interface Reliever {
   name: string;
   mobileNumber: string;
   designation: string;
-  organizationId: string;
+  organizationId: string | null;
   notes: string;
   createdAt: string;
 }

@@ -23,7 +23,6 @@ export function Sidebar({ currentView, setCurrentView, isOpen, setIsOpen, user, 
     { id: 'reports', label: 'Reports', icon: FileBarChart },
     { id: 'activity_log', label: 'Activity Log', icon: History },
     { id: 'settings', label: 'Settings', icon: SettingsIcon },
-    { id: 'migrate', label: '⬆ Migrate Old Data', icon: Database },
   ];
 
   const handleLogout = () => {

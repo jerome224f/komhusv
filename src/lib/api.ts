@@ -142,7 +142,16 @@ const attendanceTable = {
     }
     const { data, error } = await query.eq('employees.organization_id', orgId);
     if (error) { console.error('Error fetching attendance by date/org:', error); return []; }
-    return data ? data.map(fromDB) : [];
+    
+    if (!data) return [];
+    
+    // Deduplicate in case multiple records exist for the same employee+date
+    const map = new Map<string, any>();
+    for (const row of data) {
+      const d = typeof row.date === 'string' ? row.date.split('T')[0] : row.date;
+      map.set(`${row.employee_id}_${d}`, row);
+    }
+    return Array.from(map.values()).map(fromDB);
   },
   upsertMultiple: async (records: Partial<AttendanceRecord>[]): Promise<void> => {
     if (!records.length) return;
@@ -160,11 +169,17 @@ const attendanceTable = {
 
       if (existing) {
         const existingMap = new Map(
-          existing.map(e => [`${e.employee_id}_${e.date}`, e.id])
+          existing.map(e => {
+            const dateStr = typeof e.date === 'string' ? e.date.split('T')[0] : e.date;
+            return [`${e.employee_id}_${dateStr}`, e.id];
+          })
         );
         records.forEach(r => {
           if (!r.id) {
-            const key = `${r.employeeId}_${r.date}`;
+            const rDateStr = typeof r.date === 'string' ? r.date.split('T')[0] : r.date;
+            // Handle both camelCase and snake_case in case record wasn't fully converted
+            const empId = r.employeeId || (r as any).employee_id;
+            const key = `${empId}_${rDateStr}`;
             if (existingMap.has(key)) {
               r.id = existingMap.get(key);
             }
@@ -208,7 +223,16 @@ const attendanceTable = {
       .gte('date', `${month}-01`)
       .lte('date', endOfMonthStr);
     if (error) return [];
-    return data ? data.map(fromDB) : [];
+    
+    if (!data) return [];
+    
+    // Deduplicate
+    const map = new Map<string, any>();
+    for (const row of data) {
+      const d = typeof row.date === 'string' ? row.date.split('T')[0] : row.date;
+      map.set(`${row.employee_id}_${d}`, row);
+    }
+    return Array.from(map.values()).map(fromDB);
   },
   getRelievers: async (month: string): Promise<AttendanceRecord[]> => {
     const nextMonth = new Date(month + '-01');
@@ -217,11 +241,20 @@ const attendanceTable = {
 
     const { data, error } = await supabase
       .from('attendance_records').select('*')
-      .not('reliever_id', 'is', null)
+      .or('reliever_id.not.is.null,reliever_employee_id.not.is.null')
       .gte('date', `${month}-01`)
       .lte('date', endOfMonthStr);
     if (error) return [];
-    return data ? data.map(fromDB) : [];
+    
+    if (!data) return [];
+    
+    // Deduplicate
+    const map = new Map<string, any>();
+    for (const row of data) {
+      const d = typeof row.date === 'string' ? row.date.split('T')[0] : row.date;
+      map.set(`${row.employee_id}_${d}`, row);
+    }
+    return Array.from(map.values()).map(fromDB);
   },
 };
 

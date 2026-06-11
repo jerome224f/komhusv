@@ -395,7 +395,8 @@ export function Attendance() {
         date: dayStr,
         status: nextStatus,
         overtimeHours: existingOt,
-        relieverEmployeeId: null
+        relieverEmployeeId: null,
+        relieverId: null
       }];
       await api.attendance.upsertMultiple(payload);
 
@@ -407,7 +408,8 @@ export function Attendance() {
           date: dayStr,
           status: nextStatus,
           overtimeHours: existingOt,
-          relieverEmployeeId: null
+          relieverEmployeeId: null,
+          relieverId: null
         };
         if (index > -1) {
           const next = [...prev];
@@ -639,7 +641,8 @@ export function Attendance() {
         date: dayStr,
         status: nextStatus,
         overtimeHours: existingOt,
-        relieverEmployeeId: null
+        relieverEmployeeId: null,
+        relieverId: null
       }];
       await api.attendance.upsertMultiple(payload);
 
@@ -651,7 +654,8 @@ export function Attendance() {
           date: dayStr,
           status: nextStatus,
           overtimeHours: existingOt,
-          relieverEmployeeId: null
+          relieverEmployeeId: null,
+          relieverId: null
         };
         if (index > -1) {
           const next = [...prev];
@@ -742,14 +746,16 @@ export function Attendance() {
     const data = individualDays.map((dayStr, index) => {
       const rec = individualRecords.find(r => r.date === dayStr);
       const parsedDate = new Date(dayStr + 'T00:00:00');
-      const reliever = rec?.relieverEmployeeId ? allEmployees.find(e => e.id === rec.relieverEmployeeId) : null;
+      const relieverEmp = rec?.relieverEmployeeId ? allEmployees.find(e => e.id === rec.relieverEmployeeId) : null;
+      const relieverExt = rec?.relieverId ? relievers.find(r => r.id === rec.relieverId) : null;
+      const relieverName = relieverEmp ? relieverEmp.name : (relieverExt ? relieverExt.name : '-');
       return {
         'S.No': index + 1,
         'Date': dayStr,
         'Day': format(parsedDate, 'EEEE'),
         'Attendance Status': rec ? rec.status : 'Not Marked',
         'Overtime Hours': rec ? rec.overtimeHours : 0,
-        'Reliever': reliever ? reliever.name : '-'
+        'Reliever': relieverName
       };
     });
 
@@ -2116,7 +2122,7 @@ export function Attendance() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 font-semibold text-gray-700">
-                  {relievers.filter(r => !relieversOrgId || r.organizationId === relieversOrgId).length === 0 ? (
+                  {relievers.filter(r => !relieversOrgId || r.organizationId === relieversOrgId || r.organizationId === null).length === 0 ? (
                     <tr>
                       <td colSpan={7} className="p-10 text-center text-gray-400 font-medium">
                         No relievers registered for this organization.
@@ -2124,7 +2130,7 @@ export function Attendance() {
                     </tr>
                   ) : (
                     relievers
-                      .filter(r => !relieversOrgId || r.organizationId === relieversOrgId)
+                      .filter(r => !relieversOrgId || r.organizationId === relieversOrgId || r.organizationId === null)
                       .map((rel, index) => {
                         const org = organizations.find(o => o.id === rel.organizationId);
                         return (
@@ -2253,7 +2259,7 @@ export function Attendance() {
                                   <option value="">— No Reliever —</option>
                                   <optgroup label="Registered Relievers">
                                     {relievers
-                                      .filter(r => !relieversOrgId || r.organizationId === relieversOrgId)
+                                      .filter(r => !relieversOrgId || r.organizationId === relieversOrgId || r.organizationId === null)
                                       .map(r => (
                                         <option key={r.id} value={r.id}>
                                           {r.name} ({r.designation || 'Reliever'})

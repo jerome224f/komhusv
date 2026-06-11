@@ -12,24 +12,23 @@ import { Reports } from './views/Reports';
 import { Settings } from './views/Settings';
 import { ActivityLogView } from './views/ActivityLog';
 import { Login } from './views/Login';
-import { MigrateData } from './views/MigrateData';
 
 export default function App() {
   const [currentView, setCurrentView] = useState('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [user, setUser] = useState<{ username: string; role: string; name: string } | null>(() => {
-    const saved = localStorage.getItem('vstaff_user');
+    const saved = sessionStorage.getItem('vstaff_user');
     return saved ? JSON.parse(saved) : null;
   });
 
   const handleLoginSuccess = (loggedInUser: { username: string; role: string; name: string }) => {
     setUser(loggedInUser);
-    localStorage.setItem('vstaff_user', JSON.stringify(loggedInUser));
+    sessionStorage.setItem('vstaff_user', JSON.stringify(loggedInUser));
   };
 
   const handleLogout = () => {
     setUser(null);
-    localStorage.removeItem('vstaff_user');
+    sessionStorage.removeItem('vstaff_user');
   };
 
   const renderView = () => {
@@ -44,7 +43,6 @@ export default function App() {
       case 'reports': return <Reports />;
       case 'activity_log': return <ActivityLogView />;
       case 'settings': return <Settings />;
-      case 'migrate': return <MigrateData />;
       default: return <Dashboard />;
     }
   };

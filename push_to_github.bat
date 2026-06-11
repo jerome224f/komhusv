@@ -1,19 +1,18 @@
 @echo off
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo ===========================================
 echo  V-Staff HRMS - Push to GitHub + Vercel
 echo ===========================================
 echo.
-
 echo Note: If you get an authentication error, please update your Windows
 echo Git Credentials or use a new Personal Access Token (PAT).
 echo.
 
-REM Safety check: never commit .env (it has secrets)
 echo [SAFETY] Verifying .env is NOT tracked...
 git rm --cached .env 2>nul
-echo  .env is safely ignored. OK.
+echo .env is safely ignored. OK.
 echo.
 
 echo [1/5] Setting remote origin...
@@ -32,11 +31,26 @@ git add .
 echo.
 
 echo [4/5] Committing changes...
-git commit -m "fix: Postgres DATE column range queries for attendance fetching" 2>nul
+set "commit_msg="
+set /p commit_msg="Enter commit message (or press Enter for default): "
+if "!commit_msg!"=="" set "commit_msg=fix: updates and data storage changes"
+git commit -m "!commit_msg!"
 echo.
 
 echo [5/5] Pushing to GitHub (Vercel will auto-deploy)...
 git push -u origin main
+if %errorlevel% neq 0 (
+    echo.
+    echo [ERROR] Push failed. Trying to pull and merge changes first...
+    git pull --rebase origin main
+    if !errorlevel! neq 0 (
+        echo [ERROR] Automatic merge failed. Please resolve conflicts manually.
+        pause
+        exit /b 1
+    )
+    echo [INFO] Rebase successful, retrying push...
+    git push -u origin main
+)
 echo.
 
 echo ===========================================
@@ -44,8 +58,4 @@ echo  Done! Check https://vyesshrms-iota.vercel.app/
 echo  for the live deployment (takes ~1-2 min).
 echo ===========================================
 echo.
-echo  REMINDER: Set the following Environment Variables in Vercel dashboard:
-echo  VITE_SUPABASE_URL   =  https://zqcguxgqsmmnubigpdnw.supabase.co
-echo  VITE_SUPABASE_ANON_KEY  =  (your anon key from Supabase project settings)
-echo ===========================================
 pause

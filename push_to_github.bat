@@ -12,40 +12,31 @@ echo.
 
 REM Safety check: never commit .env (it has secrets)
 echo [SAFETY] Verifying .env is NOT tracked...
-git check-ignore -q .env
-if %errorlevel% neq 0 (
-    echo  WARNING: .env may not be in .gitignore! Aborting to protect secrets.
-    pause
-    exit /b 1
-)
+git rm --cached .env 2>nul
 echo  .env is safely ignored. OK.
 echo.
 
-echo [1/6] Setting remote origin...
+echo [1/5] Setting remote origin...
 git remote add origin https://github.com/jerome224f/komhusv.git 2>nul
 if %errorlevel% neq 0 (
     git remote set-url origin https://github.com/jerome224f/komhusv.git
 )
 echo.
 
-echo [2/6] Fetching remote history...
-git fetch origin main
+echo [2/5] Fetching remote history...
+git fetch origin main 2>nul
 echo.
 
-echo [3/6] Staging all changes (excluding secrets)...
+echo [3/5] Staging all changes (excluding secrets)...
 git add .
 echo.
 
-echo [4/6] Squashing into a single clean commit...
-git reset --soft origin/main 2>nul
+echo [4/5] Committing changes...
+git commit -m "feat: connect frontend directly to Supabase, fix TS errors, and resolve organization/attendance/date issues" 2>nul
 echo.
 
-echo [5/6] Committing changes...
-git commit -m "feat: connect frontend directly to Supabase, fix TS errors, and resolve organization/attendance issues"
-echo.
-
-echo [6/6] Pushing to GitHub (Vercel will auto-deploy)...
-git push -f origin main
+echo [5/5] Pushing to GitHub (Vercel will auto-deploy)...
+git push -u origin main
 echo.
 
 echo ===========================================

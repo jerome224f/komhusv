@@ -23,7 +23,42 @@ const convertKeys = (obj: any, converter: (s: string) => string): any => {
   return obj;
 };
 
-const toDB = (item: any) => convertKeys(item, toSnakeCase);
+const toDB = (item: any) => {
+  const snakeCased = convertKeys(item, toSnakeCase);
+  const sanitize = (obj: any): any => {
+    if (Array.isArray(obj)) {
+      return obj.map(sanitize);
+    } else if (obj !== null && typeof obj === 'object' && !(obj instanceof Date)) {
+      return Object.keys(obj).reduce((res, key) => {
+        const val = obj[key];
+        if (typeof val === 'string') {
+          const trimmed = val.trim();
+          const lower = trimmed.toLowerCase();
+          if (trimmed === '' || lower === 'dd-mm-yyyy' || lower === 'invalid date') {
+            res[key] = null;
+          } else {
+            // Auto-convert standard DD-MM-YYYY or DD/MM/YYYY to YYYY-MM-DD
+            const matchDash = trimmed.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+            const matchSlash = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+            if (matchDash) {
+              res[key] = `${matchDash[3]}-${matchDash[2].padStart(2, '0')}-${matchDash[1].padStart(2, '0')}`;
+            } else if (matchSlash) {
+              res[key] = `${matchSlash[3]}-${matchSlash[2].padStart(2, '0')}-${matchSlash[1].padStart(2, '0')}`;
+            } else {
+              res[key] = trimmed;
+            }
+          }
+        } else {
+          res[key] = sanitize(val);
+        }
+        return res;
+      }, {} as any);
+    }
+    return obj;
+  };
+  return sanitize(snakeCased);
+};
+
 const fromDB = (item: any) => convertKeys(item, toCamelCase);
 
 const createApiTable = <T extends { id: string }>(tableName: string) => {
